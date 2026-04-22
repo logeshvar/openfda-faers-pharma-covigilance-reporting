@@ -1,0 +1,15 @@
+# Airflow itself is provided by the official image in docker-compose.yml.
+# This file is for local dev/test installs or a future custom image build.
+# docker compose up intentionally does not pip install from this file so the
+# local stack can boot without outbound PyPI access.
+# Pin boto3 to the version family already bundled in the Airflow 2.9.3 image
+# to avoid botocore conflicts if you do install these locally.
+boto3==1.34.131
+PyYAML==6.0.2
+requests==2.32.3
+python-dotenv==1.0.1
+pendulum==3.0.0
+tenacity==8.5.0
+pytest==8.3.3
+moto[s3]==5.0.14
+urllib3==2.6.3

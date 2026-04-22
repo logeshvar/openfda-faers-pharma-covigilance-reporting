@@ -1,0 +1,33 @@
+project:
+  name: pharma-pv-pipeline
+  environment: dev
+
+storage:
+  bucket_name: pharma-pv-dev
+  region_name: us-east-1
+  endpoint_url: http://minio:9000
+  raw_prefix: raw/openfda/drug_event
+  audit_prefix: ops/audit
+
+openfda:
+  base_url: https://api.fda.gov/drug/event.json
+  date_field: receivedate
+  page_size: 100
+  max_pages_per_run: 200
+  request_timeout_seconds: 60
+  sleep_seconds_between_requests: 0.2
+
+ingestion:
+  source_name: openfda_drug_event
+  schedule: "@monthly"
+  local_staging_dir: .tmp/openfda
+
+dq:
+  min_expected_records: 0
+  required_raw_fields:
+    - safetyreportid
+    - safetyreportversion
+    - receivedate
+
+logging:
+  level: INFO

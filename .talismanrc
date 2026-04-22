@@ -1,0 +1,20 @@
+fileignoreconfig:
+- filename: .env.example
+  checksum: ac7e96a88a332e5f118b3e7c05504eeb34dc49a4ad35ecb5c36b08c735a9bffb
+- filename: docker-compose.yml
+  checksum: 8401c725a3c64884090cfb61500f45abdc331fdda9a14394da71f306201fc316
+- filename: src/common/path_builders.py
+  checksum: 19a3d65b04093b0206779fbe211c0139be67b12d0636da1c4efd70146fc725b0
+- filename: src/common/config.py
+  checksum: ce336e727d74a75df5f3bd92fbcf73c22de066a3220c3a716ffbb4fad66cf5c3
+- filename: README.md
+  checksum: 7aeda921d6120479f500a1a95f59b44df961fa3cb212d3dc1b3b91300fd2ac5a
+- filename: src/ingestion/write_ingest_audit.py
+  checksum: 4b78f22252ff68d5a834fec62cf4d36e4bea244fb561a1d552efc5d316fbcfd0
+- filename: src/ingestion/write_raw_s3.py
+  checksum: 7b6a52d821bdd5d7a75736bd31f0b4ebdf116f4f43e606d0564b4c1be54558dc
+- filename: src/dq/raw_checks.py
+  checksum: 5bfa6026f066faab5d563490840d0908ec2853d33848b64934ecae8d183d03b7
+- filename: src/curated/build_case_header.py
+  checksum: 8e4ecda189f3efb9cde9a68aad9b11f26c8c18ae1296a6f61c2ffa2d5510dd66
+version: ""
