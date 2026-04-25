@@ -29,6 +29,8 @@ class S3Settings:
     endpoint_url: str | None
     raw_prefix: str
     audit_prefix: str
+    curated_prefix: str
+    gold_prefix: str
     access_key_id: str | None
     secret_access_key: str | None
 
@@ -148,6 +150,8 @@ def load_config(config_path: str | Path | None = None) -> AppConfig:
         or _get_nested(config_data, "storage", "endpoint_url", default=None),
         raw_prefix=str(_get_nested(config_data, "storage", "raw_prefix", default="raw/openfda/drug_event")),
         audit_prefix=str(_get_nested(config_data, "storage", "audit_prefix", default="ops/audit")),
+        curated_prefix=str(_get_nested(config_data, "storage", "curated_prefix", default="curated")),
+        gold_prefix=str(_get_nested(config_data, "storage", "gold_prefix", default="gold")),
         access_key_id=_first_env("AWS_ACCESS_KEY_ID"),
         secret_access_key=_first_env("AWS_SECRET_ACCESS_KEY"),
     )

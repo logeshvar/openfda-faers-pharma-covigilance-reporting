@@ -74,5 +74,13 @@ def build_local_stage_path(staging_dir: str | Path, ingest_batch_id: str) -> Pat
     return Path(staging_dir).expanduser() / f"{ingest_batch_id}.json"
 
 
+def build_table_storage_key(layer_prefix: str, table_name: str) -> str:
+    return "/".join([layer_prefix.strip("/"), table_name.strip("/")])
+
+
 def build_s3_uri(bucket_name: str, key: str) -> str:
     return f"s3://{bucket_name}/{key.lstrip('/')}"
+
+
+def build_table_s3_uri(bucket_name: str, layer_prefix: str, table_name: str) -> str:
+    return build_s3_uri(bucket_name, build_table_storage_key(layer_prefix, table_name))

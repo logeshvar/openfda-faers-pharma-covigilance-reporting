@@ -8,6 +8,8 @@ storage:
   endpoint_url: http://minio:9000
   raw_prefix: raw/openfda/drug_event
   audit_prefix: ops/audit
+  curated_prefix: curated
+  gold_prefix: gold
 
 openfda:
   base_url: https://api.fda.gov/drug/event.json

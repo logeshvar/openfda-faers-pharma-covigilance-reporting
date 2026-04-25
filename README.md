@@ -10,10 +10,11 @@ Important boundary:
 - It does not prove causality between a drug and a reaction.
 
 Current implementation status:
-- Milestone 1 in progress
-- Raw ingestion path scaffolded
-- Airflow DAG for raw batch ingestion implemented
-- Curated and gold transformations not implemented yet
+- Milestone 1 implemented
+- Milestone 2 in progress
+- Raw ingestion path working end to end
+- First curated transform `curated_case_header` implemented as a Spark job unit
+- First curated orchestration DAG added for job planning and handoff
 
 ## Architecture
 
@@ -21,13 +22,15 @@ Target v1 architecture:
 - Orchestration: Airflow
 - Raw, ops, curated, and gold storage: S3-style layout
 - Raw landing: immutable append-only JSON
-- Processing: Databricks Spark jobs in later milestones
-- Metadata and query access: Glue Catalog and Athena in later milestones
+- Processing: Databricks Spark jobs
+- Metadata and query access: Glue Catalog and Athena
 
 Local development choices for Milestone 1:
 - Airflow runs in Docker Compose
 - MinIO provides an S3-compatible storage target for local development
 - Postgres backs Airflow metadata
+
+Architecture diagrams and the AWS transition plan live in [docs/architecture.md](</Users/logeshvar/Documents/Dubai/AWS Project/docs/architecture.md>).
 
 ## Repo Layout
 
@@ -36,7 +39,9 @@ Key folders:
 - `conf/`: environment config
 - `src/common/`: shared config and path helpers
 - `src/ingestion/`: openFDA extraction and raw landing code
+- `src/curated/`: curated layer transformation and orchestration helpers
 - `src/dq/`: raw data quality checks
+- `docs/`: architecture and design notes
 - `tests/`: reserved for unit and integration tests
 
 ## Milestone 1 Scope
@@ -51,9 +56,22 @@ Implemented:
 - raw DQ checks
 - first TaskFlow DAG: `openfda_ingest_raw`
 
+## Milestone 2 Progress
+
+Implemented:
+- `src/curated/build_case_header.py` Spark transformation for `curated_case_header`
+- pure-Python normalization helpers and unit tests for the case header model
+- curated storage config for `curated/` and `gold/`
+- raw batch resolution logic for selecting the latest raw object for a requested window
+- curated DQ checks for `curated_case_header`
+- second DAG: `openfda_build_curated_gold` for curated job planning and execution handoff
+
+Still to do in Milestone 2:
+- submit the `curated_case_header` Spark job from Airflow to the chosen runtime
+- write and validate the Delta output end to end in the target execution environment
+
 Deferred to later milestones:
-- curated Delta tables
-- Databricks Spark transforms
+- additional curated tables beyond `curated_case_header`
 - Glue Catalog and Athena refresh
 - gold reporting datasets
 - Bedrock summaries
@@ -100,6 +118,7 @@ MinIO:
 
 ```bash
 docker compose exec airflow-scheduler airflow dags list | grep openfda_ingest_raw
+docker compose exec airflow-scheduler airflow dags list | grep openfda_build_curated_gold
 ```
 
 ### 4. Trigger a manual backfill run
@@ -125,6 +144,13 @@ docker compose logs -f airflow-scheduler
 5. writes immutable raw NDJSON to the raw S3 prefix when DQ passes
 6. writes an ingest audit record to the ops S3 prefix
 
+`openfda_build_curated_gold` currently does the following for Milestone 2:
+1. resolves the requested reporting window
+2. lists raw NDJSON objects for that window from S3-compatible storage
+3. selects the latest `ingest_batch_id` unless one is explicitly supplied
+4. prepares the `curated_case_header` job manifest with raw input and curated output URIs
+5. logs the execution handoff for the Spark or Databricks runtime
+
 Manual backfill parameters:
 
 ```json
@@ -143,6 +169,9 @@ Raw data:
 
 Audit data:
 - `ops/audit/source_name=openfda_drug_event/query_year=YYYY/query_month=MM/window_start=YYYY-MM-DD/window_end=YYYY-MM-DD/*.json`
+
+Curated data target:
+- `curated/curated_case_header`
 
 ## Current Assumptions
 

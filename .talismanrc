@@ -3,8 +3,6 @@ fileignoreconfig:
   checksum: ac7e96a88a332e5f118b3e7c05504eeb34dc49a4ad35ecb5c36b08c735a9bffb
 - filename: docker-compose.yml
   checksum: 8401c725a3c64884090cfb61500f45abdc331fdda9a14394da71f306201fc316
-- filename: src/common/path_builders.py
-  checksum: 19a3d65b04093b0206779fbe211c0139be67b12d0636da1c4efd70146fc725b0
 - filename: src/common/config.py
   checksum: ce336e727d74a75df5f3bd92fbcf73c22de066a3220c3a716ffbb4fad66cf5c3
 - filename: README.md
@@ -17,4 +15,16 @@ fileignoreconfig:
   checksum: 5bfa6026f066faab5d563490840d0908ec2853d33848b64934ecae8d183d03b7
 - filename: src/curated/build_case_header.py
   checksum: 8e4ecda189f3efb9cde9a68aad9b11f26c8c18ae1296a6f61c2ffa2d5510dd66
+- filename: docs/architecture.md
+  checksum: 76134f7bf2dbe22c4405324acd126996975fb34eda1d85e96fa370064203374b
+- filename: src/dq/curated_checks.py
+  checksum: a0db8325486162733f0c2f24b2ed9259cf3e33df4c140feedad6cedcf5d5c1c5
+- filename: src/common/path_builders.py
+  checksum: 1ce0218ce3db532f48372143ed8d0e50c36e4102e2aa03be3fa44e0fe1ee578f
+- filename: airflow/dags/openfda_build_curated_gold.py
+  checksum: 905e4c73b13106e46de163b98358be19db6ff55462b1584b5650a2fa61175844
+- filename: tests/unit/test_case_header_runtime.py
+  checksum: 2d74cb93a560432ff370255c9fdc05adbcd55e60d11f1b226c1019ebfd4f764b
+- filename: src/curated/case_header_runtime.py
+  checksum: e12dffa8b5db8e0bda9cebeb1d963c2cf8895c70845eb6d6183a3f009a5dde42
 version: ""
