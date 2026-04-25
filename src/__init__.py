@@ -1,1 +1,1 @@
-"""Project source package for the pharma pharmacovigilance pipeline."""
+"""Project source package for the pharma covigilance pipeline."""

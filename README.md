@@ -1,4 +1,4 @@
-# Pharma Pharmacovigilance Reporting Pipeline
+# Pharma Covigilance Reporting Pipeline
 
 Batch pharmacovigilance reporting pipeline for a Senior Data Engineer portfolio project.
 

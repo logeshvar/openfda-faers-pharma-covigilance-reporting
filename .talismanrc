@@ -20,7 +20,7 @@ fileignoreconfig:
 - filename: airflow/dags/openfda_build_curated_gold.py
   checksum: 905e4c73b13106e46de163b98358be19db6ff55462b1584b5650a2fa61175844
 - filename: .env.example
-  checksum: 3e43803ad58920e34c7f573344f5608a7f1df2fbead6242ee42b3d709bd99924
+  checksum: ba9002d196313848aeb06b3fdc6cd6bb02fc68cfe36d2973dcc719fb437649a8
 - filename: src/common/databricks_jobs.py
   checksum: 45a7233da1076b4935ba379178f9168b00ba69cf49d97e187ca7a60895f5458b
 - filename: tests/unit/test_databricks_jobs.py

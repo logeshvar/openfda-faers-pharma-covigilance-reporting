@@ -145,20 +145,19 @@ def _resolve_path(root_dir: Path, value: str | Path) -> Path:
 
 @lru_cache(maxsize=4)
 def load_config(config_path: str | Path | None = None) -> AppConfig:
-    resolved_config_path = Path(
-        _env_or_default("PV_CONFIG_PATH", config_path or DEFAULT_CONFIG_PATH)
-    ).expanduser()
+    config_path_from_env = _first_env("CV_CONFIG_PATH")
+    resolved_config_path = Path(config_path_from_env or config_path or DEFAULT_CONFIG_PATH).expanduser()
     config_data = _read_yaml(resolved_config_path)
 
     project = ProjectSettings(
-        name=str(_get_nested(config_data, "project", "name", default="pharma-pv-pipeline")),
+        name=str(_get_nested(config_data, "project", "name", default="pharma-cv-pipeline")),
         environment=str(_get_nested(config_data, "project", "environment", default="dev")),
     )
 
     s3 = S3Settings(
         bucket_name=str(
             _env_or_default(
-                "S3_BUCKET", _get_nested(config_data, "storage", "bucket_name", default="pharma-pv-dev")
+                "S3_BUCKET", _get_nested(config_data, "storage", "bucket_name", default="pharma-cv-dev")
             )
         ),
         region_name=str(

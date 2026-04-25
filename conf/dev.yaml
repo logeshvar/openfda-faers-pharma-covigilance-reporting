@@ -1,9 +1,9 @@
 project:
-  name: pharma-pv-pipeline
+  name: pharma-cv-pipeline
   environment: dev
 
 storage:
-  bucket_name: pharma-pv-dev
+  bucket_name: pharma-cv-dev
   region_name: us-east-1
   endpoint_url: http://minio:9000
   raw_prefix: raw/openfda/drug_event

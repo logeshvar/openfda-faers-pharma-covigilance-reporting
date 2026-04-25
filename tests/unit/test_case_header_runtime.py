@@ -27,9 +27,9 @@ from src.curated.case_header_runtime import (
 
 def _build_test_config(endpoint_url: str | None = None) -> AppConfig:
     return AppConfig(
-        project=ProjectSettings(name="pharma-pv-pipeline", environment="test"),
+        project=ProjectSettings(name="pharma-cv-pipeline", environment="test"),
         s3=S3Settings(
-            bucket_name="pharma-pv-test",
+            bucket_name="pharma-cv-test",
             region_name="us-east-1",
             endpoint_url=endpoint_url,
             raw_prefix="raw/openfda/drug_event",
