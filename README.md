@@ -11,10 +11,11 @@ Important boundary:
 
 Current implementation status:
 - Milestone 1 implemented
-- Milestone 2 in progress
+- Milestone 2 implemented
+- Milestone 3 implemented
 - Raw ingestion path working end to end
-- First curated transform `curated_case_header` implemented as a Spark job unit
-- First curated orchestration DAG added for job planning and handoff
+- Curated transforms implemented for `curated_case_header`, `curated_primary_source`, and `curated_patient_demo`
+- Curated orchestration DAG prepares a Databricks Jobs API payload and can submit it when enabled
 
 ## Architecture
 
@@ -27,7 +28,7 @@ Target v1 architecture:
 
 Local development choices for Milestone 1:
 - Airflow runs in Docker Compose
-- MinIO provides an S3-compatible storage target for local development
+- MinIO provides an S3-compatible storage target for local development only
 - Postgres backs Airflow metadata
 
 Architecture diagrams and the AWS transition plan live in [docs/architecture.md](</Users/logeshvar/Documents/Dubai/AWS Project/docs/architecture.md>).
@@ -64,14 +65,18 @@ Implemented:
 - curated storage config for `curated/` and `gold/`
 - raw batch resolution logic for selecting the latest raw object for a requested window
 - curated DQ checks for `curated_case_header`
-- second DAG: `openfda_build_curated_gold` for curated job planning and execution handoff
+- second DAG: `openfda_build_curated_gold` for Databricks curated job planning and optional submission
 
-Still to do in Milestone 2:
-- submit the `curated_case_header` Spark job from Airflow to the chosen runtime
-- write and validate the Delta output end to end in the target execution environment
+## Milestone 3 Progress
+
+Implemented:
+- `src/curated/build_primary_source.py` Spark transformation for `curated_primary_source`
+- `src/curated/build_patient_demo.py` Spark transformation for `curated_patient_demo`
+- Python normalization tests for qualification labels, sex labels, age unit labels, age conversion, age bands, and latest-row dedupe
+- Databricks task generation for the three curated Spark scripts
 
 Deferred to later milestones:
-- additional curated tables beyond `curated_case_header`
+- remaining curated drug and reaction tables
 - Glue Catalog and Athena refresh
 - gold reporting datasets
 - Bedrock summaries
@@ -148,8 +153,9 @@ docker compose logs -f airflow-scheduler
 1. resolves the requested reporting window
 2. lists raw NDJSON objects for that window from S3-compatible storage
 3. selects the latest `ingest_batch_id` unless one is explicitly supplied
-4. prepares the `curated_case_header` job manifest with raw input and curated output URIs
-5. logs the execution handoff for the Spark or Databricks runtime
+4. prepares job manifests for `curated_case_header`, `curated_primary_source`, and `curated_patient_demo`
+5. builds a Databricks Jobs API `runs/submit` payload
+6. submits the run only when `DATABRICKS_SUBMIT_ENABLED=true`; otherwise it logs a dry-run result
 
 Manual backfill parameters:
 
@@ -172,6 +178,17 @@ Audit data:
 
 Curated data target:
 - `curated/curated_case_header`
+- `curated/curated_primary_source`
+- `curated/curated_patient_demo`
+
+## Target AWS Configuration
+
+For target-style execution, use `conf/prod.yaml` as the shape of the AWS config:
+- `S3_ENDPOINT_URL` should be unset so boto3 uses Amazon S3.
+- `S3_BUCKET` should point to the real project bucket.
+- Airflow should use an IAM role with S3 read/write access instead of static local keys.
+- `DATABRICKS_HOST` and `DATABRICKS_TOKEN` should come from Secrets Manager, an Airflow connection, or the managed runtime environment.
+- `DATABRICKS_PYTHON_FILE_BASE_URI` should point to the S3 location where the curated Spark scripts are staged.
 
 ## Current Assumptions
 

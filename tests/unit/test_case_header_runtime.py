@@ -8,6 +8,7 @@ from moto import mock_aws
 
 from src.common.config import (
     AppConfig,
+    DatabricksSettings,
     DQSettings,
     IngestionSettings,
     LoggingSettings,
@@ -16,9 +17,11 @@ from src.common.config import (
     S3Settings,
 )
 from src.curated.case_header_runtime import (
+    build_databricks_tasks_for_curated_manifests,
     build_raw_window_prefix,
     list_raw_batch_objects_for_window,
     resolve_case_header_job_manifest,
+    resolve_curated_job_manifests,
 )
 
 
@@ -43,6 +46,16 @@ def _build_test_config(endpoint_url: str | None = None) -> AppConfig:
             max_pages_per_run=200,
             request_timeout_seconds=60,
             sleep_seconds_between_requests=0.0,
+        ),
+        databricks=DatabricksSettings(
+            submit_enabled=False,
+            host=None,
+            token=None,
+            run_name_prefix="pharma-cv",
+            python_file_base_uri="s3://pharma-cv-test/jobs/src",
+            spark_version="14.3.x-scala2.12",
+            node_type_id="i3.xlarge",
+            num_workers=1,
         ),
         ingestion=IngestionSettings(
             source_name="openfda_drug_event",
@@ -132,4 +145,68 @@ def test_resolve_case_header_job_manifest_selects_latest_batch_by_default() -> N
 
     assert manifest.selected_ingest_batch_id == "openfda_drug_event_20260301_20260331_20260421T040000Z"
     assert manifest.raw_input_s3_uri.endswith("/newer.ndjson")
-    assert manifest.curated_output_s3_uri == "s3://pharma-pv-test/curated/curated_case_header"
+    assert manifest.curated_output_s3_uri == "s3://pharma-cv-test/curated/curated_case_header"
+
+
+@mock_aws
+def test_resolve_curated_job_manifests_prepares_milestone_2_and_3_tables() -> None:
+    config = _build_test_config()
+    client = boto3.client("s3", region_name=config.s3.region_name)
+    client.create_bucket(Bucket=config.s3.bucket_name)
+    requested_window_prefix = build_raw_window_prefix(
+        config.s3.raw_prefix,
+        window_start=date(2026, 3, 1),
+        window_end=date(2026, 3, 31),
+    )
+    client.put_object(
+        Bucket=config.s3.bucket_name,
+        Key=f"{requested_window_prefix}/ingest_batch_id=batch_001/file_001.ndjson",
+        Body=b"{}",
+    )
+
+    manifests = resolve_curated_job_manifests(
+        config=config,
+        window_start="2026-03-01",
+        window_end="2026-03-31",
+    )
+
+    assert [manifest.table_name for manifest in manifests] == [
+        "curated_case_header",
+        "curated_primary_source",
+        "curated_patient_demo",
+    ]
+    assert [manifest.curated_output_s3_uri for manifest in manifests] == [
+        "s3://pharma-cv-test/curated/curated_case_header",
+        "s3://pharma-cv-test/curated/curated_primary_source",
+        "s3://pharma-cv-test/curated/curated_patient_demo",
+    ]
+
+
+def test_build_databricks_tasks_for_curated_manifests_builds_spark_python_tasks() -> None:
+    config = _build_test_config()
+    manifests = [
+        {
+            "table_name": "curated_primary_source",
+            "python_file": "curated/build_primary_source.py",
+            "raw_input_s3_uri": "s3://pharma-cv-test/raw/file.ndjson",
+            "curated_output_s3_uri": "s3://pharma-cv-test/curated/curated_primary_source",
+        }
+    ]
+
+    tasks = build_databricks_tasks_for_curated_manifests(config=config, manifests=manifests)
+
+    assert tasks == [
+        {
+            "task_key": "build_curated_primary_source",
+            "job_cluster_key": "curated_job_cluster",
+            "spark_python_task": {
+                "python_file": "s3://pharma-cv-test/jobs/src/curated/build_primary_source.py",
+                "parameters": [
+                    "--raw-input-path",
+                    "s3://pharma-cv-test/raw/file.ndjson",
+                    "--output-path",
+                    "s3://pharma-cv-test/curated/curated_primary_source",
+                ],
+            },
+        }
+    ]

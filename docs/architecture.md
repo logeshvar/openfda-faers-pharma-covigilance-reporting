@@ -1,8 +1,12 @@
 # Architecture
 
-This project is intentionally built in two views:
-- a local development view that is easy to run on a laptop
-- a target AWS view that matches the portfolio architecture
+This project is built around the target portfolio architecture first:
+- Airflow orchestrates the pipeline.
+- S3 is the system of record for raw, ops/audit, curated, and gold.
+- Databricks Spark jobs transform raw JSON into Delta tables.
+- Glue Catalog and Athena provide metadata and SQL access.
+
+Local development uses MinIO only as an S3-compatible emulator.
 
 ## Local Development Flow
 
@@ -14,9 +18,12 @@ flowchart LR
     D --> E["MinIO raw prefix<br/>raw/openfda/drug_event/..."]
     D --> F["MinIO ops/audit prefix<br/>ops/audit/..."]
     E --> G["Airflow DAG: openfda_build_curated_gold"]
-    G --> H["case_header_runtime.py<br/>select latest raw batch for window"]
-    H --> I["build_case_header.py<br/>Spark/Delta job unit"]
-    I --> J["Curated Delta target<br/>curated/curated_case_header"]
+    G --> H["case_header_runtime.py<br/>select latest raw batch"]
+    H --> I["Databricks Jobs API payload"]
+    I --> J["Spark/Delta curated jobs"]
+    J --> K["curated_case_header"]
+    J --> L["curated_primary_source"]
+    J --> M["curated_patient_demo"]
 ```
 
 ## Current Code Path
@@ -27,10 +34,12 @@ The implemented ingestion flow is fully runnable locally today:
 - Raw records are wrapped in bronze-style envelopes and written as immutable NDJSON.
 - A batch audit document is written even when raw DQ fails.
 
-Milestone 2 now has the first curated orchestration slice in place:
-- `curated_case_header` Spark transformation logic exists.
-- raw batch selection logic can resolve the latest raw object for a given reporting window.
-- a curated build DAG prepares the job manifest that the Spark or Databricks runner will execute.
+The current curated scope includes:
+- `curated_case_header`
+- `curated_primary_source`
+- `curated_patient_demo`
+
+The Airflow curated DAG now prepares a Databricks Jobs API `runs/submit` payload. In dev, submission is disabled by default so the payload can be reviewed without needing live Databricks credentials. In the AWS-oriented config, submission is enabled and requires `DATABRICKS_HOST` plus `DATABRICKS_TOKEN` from the runtime environment or a secrets backend.
 
 ## Target AWS Architecture
 
@@ -79,5 +88,6 @@ The code path is designed so the migration is mostly configuration and packaging
 - remove `S3_ENDPOINT_URL`
 - switch from static local credentials to IAM roles
 - package the curated Spark jobs for Databricks execution
+- upload the `src/curated/*.py` Spark scripts to the configured `databricks.python_file_base_uri`
 - register curated and gold Delta tables in Glue
 - query them through Athena

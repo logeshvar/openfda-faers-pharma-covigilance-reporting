@@ -1,12 +1,8 @@
 fileignoreconfig:
-- filename: .env.example
-  checksum: ac7e96a88a332e5f118b3e7c05504eeb34dc49a4ad35ecb5c36b08c735a9bffb
 - filename: docker-compose.yml
   checksum: 8401c725a3c64884090cfb61500f45abdc331fdda9a14394da71f306201fc316
 - filename: src/common/config.py
   checksum: ce336e727d74a75df5f3bd92fbcf73c22de066a3220c3a716ffbb4fad66cf5c3
-- filename: README.md
-  checksum: 7aeda921d6120479f500a1a95f59b44df961fa3cb212d3dc1b3b91300fd2ac5a
 - filename: src/ingestion/write_ingest_audit.py
   checksum: 4b78f22252ff68d5a834fec62cf4d36e4bea244fb561a1d552efc5d316fbcfd0
 - filename: src/ingestion/write_raw_s3.py
@@ -23,8 +19,20 @@ fileignoreconfig:
   checksum: 1ce0218ce3db532f48372143ed8d0e50c36e4102e2aa03be3fa44e0fe1ee578f
 - filename: airflow/dags/openfda_build_curated_gold.py
   checksum: 905e4c73b13106e46de163b98358be19db6ff55462b1584b5650a2fa61175844
+- filename: .env.example
+  checksum: 3e43803ad58920e34c7f573344f5608a7f1df2fbead6242ee42b3d709bd99924
+- filename: src/common/databricks_jobs.py
+  checksum: 45a7233da1076b4935ba379178f9168b00ba69cf49d97e187ca7a60895f5458b
+- filename: tests/unit/test_databricks_jobs.py
+  checksum: 3c526a296f9f0141577dcecac7b95e8e51701ed8aa26eca9adddfd85cf0502d8
+- filename: src/curated/build_patient_demo.py
+  checksum: ae4afd45de20d4b21d362e95ab518cf8a103c5ed4e4175c1d08178298f28a1d8
 - filename: tests/unit/test_case_header_runtime.py
-  checksum: 2d74cb93a560432ff370255c9fdc05adbcd55e60d11f1b226c1019ebfd4f764b
+  checksum: 8970e0356f6f261373f788c8d7474b4aef5d20ea3056b80e0db91d19ce70b8a9
 - filename: src/curated/case_header_runtime.py
-  checksum: e12dffa8b5db8e0bda9cebeb1d963c2cf8895c70845eb6d6183a3f009a5dde42
+  checksum: c9e9ba4bfebdc7720d316e99f5fc39c229ba7f6b7ccdda73a3d1444832357c30
+- filename: README.md
+  checksum: a5df632f947fc5a67f7ff5d92e29f6add7b00b919053bc902370b43d3568480f
+- filename: src/curated/build_primary_source.py
+  checksum: 36b3b6672cfa018bb5c69f475d3003bb9700691caa6d37926e93d26c3d5b2e3d
 version: ""

@@ -14,9 +14,27 @@ from src.curated.build_case_header import (
     CASE_HEADER_PARTITION_COLUMNS,
     CURATED_CASE_HEADER_TABLE,
 )
+from src.curated.build_patient_demo import (
+    CURATED_PATIENT_DEMO_TABLE,
+    PATIENT_DEMO_KEY_COLUMNS,
+    PATIENT_DEMO_PARTITION_COLUMNS,
+)
+from src.curated.build_primary_source import (
+    CURATED_PRIMARY_SOURCE_TABLE,
+    PRIMARY_SOURCE_KEY_COLUMNS,
+    PRIMARY_SOURCE_PARTITION_COLUMNS,
+)
 from src.ingestion.extract_openfda import parse_window_date
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class CuratedTableSpec:
+    table_name: str
+    python_file: str
+    key_columns: tuple[str, ...]
+    partition_columns: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -36,8 +54,9 @@ class RawBatchObject:
 
 
 @dataclass(frozen=True)
-class CaseHeaderJobManifest:
+class CuratedJobManifest:
     table_name: str
+    python_file: str
     query_window_start: str
     query_window_end: str
     raw_input_s3_uri: str
@@ -55,6 +74,31 @@ class CaseHeaderJobManifest:
             "raw_input_path": self.raw_input_s3_uri,
             "output_path": self.curated_output_s3_uri,
         }
+
+
+CaseHeaderJobManifest = CuratedJobManifest
+
+
+CURATED_TABLE_SPECS: dict[str, CuratedTableSpec] = {
+    CURATED_CASE_HEADER_TABLE: CuratedTableSpec(
+        table_name=CURATED_CASE_HEADER_TABLE,
+        python_file="curated/build_case_header.py",
+        key_columns=CASE_HEADER_KEY_COLUMNS,
+        partition_columns=CASE_HEADER_PARTITION_COLUMNS,
+    ),
+    CURATED_PRIMARY_SOURCE_TABLE: CuratedTableSpec(
+        table_name=CURATED_PRIMARY_SOURCE_TABLE,
+        python_file="curated/build_primary_source.py",
+        key_columns=PRIMARY_SOURCE_KEY_COLUMNS,
+        partition_columns=PRIMARY_SOURCE_PARTITION_COLUMNS,
+    ),
+    CURATED_PATIENT_DEMO_TABLE: CuratedTableSpec(
+        table_name=CURATED_PATIENT_DEMO_TABLE,
+        python_file="curated/build_patient_demo.py",
+        key_columns=PATIENT_DEMO_KEY_COLUMNS,
+        partition_columns=PATIENT_DEMO_PARTITION_COLUMNS,
+    ),
+}
 
 
 def _build_s3_client(s3_settings: S3Settings):
@@ -155,12 +199,14 @@ def select_raw_batch_object(
     return max(batch_objects, key=lambda batch_object: batch_object.ingest_batch_id)
 
 
-def build_case_header_job_manifest(
+def build_curated_job_manifest_for_table(
     config: AppConfig,
     raw_batch_object: RawBatchObject,
-) -> CaseHeaderJobManifest:
-    return CaseHeaderJobManifest(
-        table_name=CURATED_CASE_HEADER_TABLE,
+    table_spec: CuratedTableSpec,
+) -> CuratedJobManifest:
+    return CuratedJobManifest(
+        table_name=table_spec.table_name,
+        python_file=table_spec.python_file,
         query_window_start=raw_batch_object.query_window_start,
         query_window_end=raw_batch_object.query_window_end,
         raw_input_s3_uri=raw_batch_object.s3_uri,
@@ -169,10 +215,21 @@ def build_case_header_job_manifest(
         curated_output_s3_uri=build_table_s3_uri(
             bucket_name=config.s3.bucket_name,
             layer_prefix=config.s3.curated_prefix,
-            table_name=CURATED_CASE_HEADER_TABLE,
+            table_name=table_spec.table_name,
         ),
-        key_columns=CASE_HEADER_KEY_COLUMNS,
-        partition_columns=CASE_HEADER_PARTITION_COLUMNS,
+        key_columns=table_spec.key_columns,
+        partition_columns=table_spec.partition_columns,
+    )
+
+
+def build_case_header_job_manifest(
+    config: AppConfig,
+    raw_batch_object: RawBatchObject,
+) -> CuratedJobManifest:
+    return build_curated_job_manifest_for_table(
+        config=config,
+        raw_batch_object=raw_batch_object,
+        table_spec=CURATED_TABLE_SPECS[CURATED_CASE_HEADER_TABLE],
     )
 
 
@@ -197,3 +254,82 @@ def resolve_case_header_job_manifest(
         manifest.curated_output_s3_uri,
     )
     return manifest
+
+
+def resolve_curated_job_manifests(
+    config: AppConfig,
+    window_start: str | date,
+    window_end: str | date,
+    ingest_batch_id: str | None = None,
+    table_names: tuple[str, ...] | None = None,
+) -> list[CuratedJobManifest]:
+    batch_objects = list_raw_batch_objects_for_window(
+        config=config,
+        window_start=window_start,
+        window_end=window_end,
+    )
+    selected_batch = select_raw_batch_object(batch_objects, ingest_batch_id=ingest_batch_id)
+    selected_table_names = table_names or (
+        CURATED_CASE_HEADER_TABLE,
+        CURATED_PRIMARY_SOURCE_TABLE,
+        CURATED_PATIENT_DEMO_TABLE,
+    )
+
+    manifests = [
+        build_curated_job_manifest_for_table(
+            config=config,
+            raw_batch_object=selected_batch,
+            table_spec=CURATED_TABLE_SPECS[table_name],
+        )
+        for table_name in selected_table_names
+    ]
+
+    logger.info(
+        "Prepared %s curated job manifest(s) ingest_batch_id=%s raw_input=%s",
+        len(manifests),
+        selected_batch.ingest_batch_id,
+        selected_batch.s3_uri,
+    )
+    return manifests
+
+
+def build_databricks_tasks_for_curated_manifests(
+    config: AppConfig,
+    manifests: list[CuratedJobManifest | dict[str, Any]],
+) -> list[dict[str, Any]]:
+    tasks: list[dict[str, Any]] = []
+
+    for manifest in manifests:
+        table_name = manifest["table_name"] if isinstance(manifest, dict) else manifest.table_name
+        python_file_value = manifest["python_file"] if isinstance(manifest, dict) else manifest.python_file
+        raw_input_s3_uri = (
+            manifest["raw_input_s3_uri"] if isinstance(manifest, dict) else manifest.raw_input_s3_uri
+        )
+        curated_output_s3_uri = (
+            manifest["curated_output_s3_uri"]
+            if isinstance(manifest, dict)
+            else manifest.curated_output_s3_uri
+        )
+        python_file = "/".join(
+            [
+                config.databricks.python_file_base_uri.rstrip("/"),
+                python_file_value.strip("/"),
+            ]
+        )
+        tasks.append(
+            {
+                "task_key": f"build_{table_name}",
+                "job_cluster_key": "curated_job_cluster",
+                "spark_python_task": {
+                    "python_file": python_file,
+                    "parameters": [
+                        "--raw-input-path",
+                        raw_input_s3_uri,
+                        "--output-path",
+                        curated_output_s3_uri,
+                    ],
+                },
+            }
+        )
+
+    return tasks

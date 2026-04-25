@@ -8,8 +8,12 @@ import pendulum
 from airflow.decorators import dag, task
 from airflow.operators.python import get_current_context
 
+from src.common.databricks_jobs import build_databricks_submit_run_payload, submit_databricks_run
 from src.common.config import load_config
-from src.curated.case_header_runtime import resolve_case_header_job_manifest
+from src.curated.case_header_runtime import (
+    build_databricks_tasks_for_curated_manifests,
+    resolve_curated_job_manifests,
+)
 from src.ingestion.extract_openfda import parse_window_date
 
 logger = logging.getLogger(__name__)
@@ -40,9 +44,10 @@ def _default_window_from_context(context: dict[str, Any]) -> tuple[str, str]:
     doc_md="""
     ## Curated and gold build DAG
 
-    Milestone 2 currently implements the first curated step:
-    - locate the latest raw batch for a reporting window
-    - prepare the `curated_case_header` job manifest
+    Current curated scope:
+    - `curated_case_header`
+    - `curated_primary_source`
+    - `curated_patient_demo`
 
     Manual overrides can be supplied with `dag_run.conf`:
 
@@ -78,8 +83,8 @@ def openfda_build_curated_gold():
         }
 
     @task
-    def prepare_case_header_job(runtime_options: dict[str, Any]) -> dict[str, Any]:
-        manifest = resolve_case_header_job_manifest(
+    def prepare_curated_jobs(runtime_options: dict[str, Any]) -> list[dict[str, Any]]:
+        manifests = resolve_curated_job_manifests(
             config=CONFIG,
             window_start=runtime_options["window_start"],
             window_end=runtime_options["window_end"],
@@ -87,27 +92,37 @@ def openfda_build_curated_gold():
         )
 
         logger.info(
-            "Prepared curated_case_header manifest ingest_batch_id=%s raw_input=%s output=%s",
-            manifest.selected_ingest_batch_id,
-            manifest.raw_input_s3_uri,
-            manifest.curated_output_s3_uri,
+            "Prepared %s curated manifest(s) for ingest_batch_id=%s",
+            len(manifests),
+            manifests[0].selected_ingest_batch_id if manifests else None,
         )
-        return manifest.to_dict()
+        return [manifest.to_dict() for manifest in manifests]
 
     @task
-    def log_execution_handoff(case_header_manifest: dict[str, Any]) -> None:
-        logger.info(
-            "Milestone 2 handoff ready for Spark/Databricks execution: table=%s raw_input=%s output=%s key_columns=%s partition_columns=%s",
-            case_header_manifest["table_name"],
-            case_header_manifest["raw_input_s3_uri"],
-            case_header_manifest["curated_output_s3_uri"],
-            case_header_manifest["key_columns"],
-            case_header_manifest["partition_columns"],
+    def build_databricks_payload(curated_manifests: list[dict[str, Any]]) -> dict[str, Any]:
+        tasks = build_databricks_tasks_for_curated_manifests(config=CONFIG, manifests=curated_manifests)
+        run_name = (
+            f"{CONFIG.databricks.run_name_prefix}_curated_"
+            f"{curated_manifests[0]['query_window_start']}_{curated_manifests[0]['query_window_end']}"
         )
+        return build_databricks_submit_run_payload(config=CONFIG, run_name=run_name, tasks=tasks)
+
+    @task
+    def submit_or_log_databricks_run(payload: dict[str, Any]) -> dict[str, Any]:
+        result = submit_databricks_run(config=CONFIG, payload=payload)
+        logger.info(
+            "Databricks curated run result submitted=%s run_id=%s url=%s message=%s",
+            result.submitted,
+            result.run_id,
+            result.run_page_url,
+            result.message,
+        )
+        return result.to_dict()
 
     runtime_options = resolve_runtime_options()
-    case_header_manifest = prepare_case_header_job(runtime_options)
-    log_execution_handoff(case_header_manifest)
+    curated_manifests = prepare_curated_jobs(runtime_options)
+    databricks_payload = build_databricks_payload(curated_manifests)
+    submit_or_log_databricks_run(databricks_payload)
 
 
 openfda_build_curated_gold()

@@ -46,6 +46,18 @@ class OpenFDASettings:
 
 
 @dataclass(frozen=True)
+class DatabricksSettings:
+    submit_enabled: bool
+    host: str | None
+    token: str | None
+    run_name_prefix: str
+    python_file_base_uri: str
+    spark_version: str
+    node_type_id: str
+    num_workers: int
+
+
+@dataclass(frozen=True)
 class IngestionSettings:
     source_name: str
     schedule: str
@@ -68,6 +80,7 @@ class AppConfig:
     project: ProjectSettings
     s3: S3Settings
     openfda: OpenFDASettings
+    databricks: DatabricksSettings
     ingestion: IngestionSettings
     dq: DQSettings
     logging: LoggingSettings
@@ -115,6 +128,12 @@ def _as_int(value: Any) -> int:
 
 def _as_float(value: Any) -> float:
     return float(value)
+
+
+def _as_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
 def _resolve_path(root_dir: Path, value: str | Path) -> Path:
@@ -189,6 +208,54 @@ def load_config(config_path: str | Path | None = None) -> AppConfig:
         ),
     )
 
+    databricks = DatabricksSettings(
+        submit_enabled=_as_bool(
+            _env_or_default(
+                "DATABRICKS_SUBMIT_ENABLED",
+                _get_nested(config_data, "databricks", "submit_enabled", default=False),
+            )
+        ),
+        host=_first_env("DATABRICKS_HOST")
+        or _get_nested(config_data, "databricks", "host", default=None),
+        token=_first_env("DATABRICKS_TOKEN")
+        or _get_nested(config_data, "databricks", "token", default=None),
+        run_name_prefix=str(
+            _env_or_default(
+                "DATABRICKS_RUN_NAME_PREFIX",
+                _get_nested(config_data, "databricks", "run_name_prefix", default="pharma-cv"),
+            )
+        ),
+        python_file_base_uri=str(
+            _env_or_default(
+                "DATABRICKS_PYTHON_FILE_BASE_URI",
+                _get_nested(
+                    config_data,
+                    "databricks",
+                    "python_file_base_uri",
+                    default=f"s3://{s3.bucket_name}/jobs/src",
+                ),
+            )
+        ),
+        spark_version=str(
+            _env_or_default(
+                "DATABRICKS_SPARK_VERSION",
+                _get_nested(config_data, "databricks", "spark_version", default="14.3.x-scala2.12"),
+            )
+        ),
+        node_type_id=str(
+            _env_or_default(
+                "DATABRICKS_NODE_TYPE_ID",
+                _get_nested(config_data, "databricks", "node_type_id", default="i3.xlarge"),
+            )
+        ),
+        num_workers=_as_int(
+            _env_or_default(
+                "DATABRICKS_NUM_WORKERS",
+                _get_nested(config_data, "databricks", "num_workers", default=1),
+            )
+        ),
+    )
+
     ingestion = IngestionSettings(
         source_name=str(_get_nested(config_data, "ingestion", "source_name", default="openfda_drug_event")),
         schedule=str(_get_nested(config_data, "ingestion", "schedule", default="@monthly")),
@@ -212,6 +279,7 @@ def load_config(config_path: str | Path | None = None) -> AppConfig:
         project=project,
         s3=s3,
         openfda=openfda,
+        databricks=databricks,
         ingestion=ingestion,
         dq=dq,
         logging=logging,
