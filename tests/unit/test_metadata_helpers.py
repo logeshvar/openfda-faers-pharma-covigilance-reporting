@@ -13,10 +13,14 @@ from src.common.config import (
     ProjectSettings,
     S3Settings,
 )
-from src.common.databricks_jobs import build_databricks_submit_run_payload, submit_databricks_run
+from src.metadata.athena_validation_queries import render_validation_queries
+from src.metadata.glue_refresh import (
+    build_athena_create_delta_table_sql,
+    build_delta_table_registrations,
+)
 
 
-def _build_test_config(submit_enabled: bool = False) -> AppConfig:
+def _build_test_config() -> AppConfig:
     return AppConfig(
         project=ProjectSettings(name="pharma-cv-pipeline", environment="test"),
         s3=S3Settings(
@@ -39,7 +43,7 @@ def _build_test_config(submit_enabled: bool = False) -> AppConfig:
             sleep_seconds_between_requests=0.0,
         ),
         databricks=DatabricksSettings(
-            submit_enabled=submit_enabled,
+            submit_enabled=False,
             host=None,
             token=None,
             run_name_prefix="pharma-cv",
@@ -52,12 +56,7 @@ def _build_test_config(submit_enabled: bool = False) -> AppConfig:
             glue_database_name="pharma_cv_test",
             athena_results_s3_uri="s3://pharma-cv-test/ops/athena-results/",
         ),
-        ingestion=IngestionSettings(
-            source_name="openfda_drug_event",
-            schedule="@monthly",
-            local_staging_dir=Path("/tmp/openfda"),
-            cleanup_staging_files=True,
-        ),
+        ingestion=IngestionSettings("openfda_drug_event", "@monthly", Path("/tmp/openfda"), True),
         dq=DQSettings(min_expected_records=0, required_raw_fields=("safetyreportid",)),
         logging=LoggingSettings(level="INFO"),
         config_path=Path("/tmp/dev.yaml"),
@@ -65,26 +64,25 @@ def _build_test_config(submit_enabled: bool = False) -> AppConfig:
     )
 
 
-def test_build_databricks_submit_run_payload_wraps_tasks_in_job_cluster() -> None:
-    config = _build_test_config()
+def test_build_delta_table_registrations_includes_curated_and_gold_tables() -> None:
+    registrations = build_delta_table_registrations(_build_test_config())
 
-    payload = build_databricks_submit_run_payload(
-        config=config,
-        run_name="pharma-cv_curated_2026-03-01_2026-03-31",
-        tasks=[{"task_key": "build_curated_case_header"}],
-    )
-
-    assert payload["run_name"] == "pharma-cv_curated_2026-03-01_2026-03-31"
-    assert payload["job_clusters"][0]["job_cluster_key"] == "curated_job_cluster"
-    assert payload["job_clusters"][0]["new_cluster"]["spark_version"] == "14.3.x-scala2.12"
-    assert payload["tasks"] == [{"task_key": "build_curated_case_header"}]
+    assert len(registrations) == 11
+    assert registrations[0].table_name == "curated_case_header"
+    assert registrations[-1].table_name == "gold_manufacturer_class_serious_trends"
 
 
-def test_submit_databricks_run_returns_dry_run_result_when_submission_disabled() -> None:
-    config = _build_test_config(submit_enabled=False)
+def test_build_athena_create_delta_table_sql_sets_delta_property() -> None:
+    registration = build_delta_table_registrations(_build_test_config())[0]
 
-    result = submit_databricks_run(config=config, payload={"run_name": "test"})
+    sql = build_athena_create_delta_table_sql("pharma_cv_test", registration)
 
-    assert result.submitted is False
-    assert result.run_id is None
-    assert result.message == "Databricks submission disabled; prepared payload only."
+    assert "CREATE EXTERNAL TABLE IF NOT EXISTS pharma_cv_test.curated_case_header" in sql
+    assert "TBLPROPERTIES ('table_type'='DELTA')" in sql
+
+
+def test_render_validation_queries_qualifies_tables_with_database() -> None:
+    rendered = render_validation_queries("pharma_cv_test")
+
+    assert "FROM pharma_cv_test.curated_case_header" in rendered["curated_case_header_row_count"]
+    assert "FROM pharma_cv_test.gold_drug_reaction_trends" in rendered["gold_top_drug_reactions"]

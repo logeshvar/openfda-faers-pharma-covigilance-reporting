@@ -19,6 +19,10 @@ databricks:
   node_type_id: i3.xlarge
   num_workers: 2
 
+metadata:
+  glue_database_name: pharma_cv_prod
+  athena_results_s3_uri: s3://pharma-cv-prod/ops/athena-results/
+
 openfda:
   base_url: https://api.fda.gov/drug/event.json
   date_field: receivedate
@@ -29,8 +33,11 @@ openfda:
 
 ingestion:
   source_name: openfda_drug_event
-  schedule: "@monthly"
+  schedule: "0 6 * * *"
   local_staging_dir: /tmp/openfda
+  cleanup_staging_files: true
+  source_lag_days: 120
+  default_window_days: 1
 
 dq:
   min_expected_records: 0

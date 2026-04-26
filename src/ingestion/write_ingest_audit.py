@@ -5,9 +5,8 @@ import logging
 from dataclasses import asdict, dataclass
 from typing import Any
 
-import boto3
-
-from src.common.config import AppConfig, S3Settings
+from src.common.aws_clients import build_s3_client
+from src.common.config import AppConfig
 from src.common.path_builders import build_audit_s3_key, build_s3_uri
 from src.dq.raw_checks import DQSummary
 from src.ingestion.extract_openfda import ExtractionResult, parse_window_date
@@ -24,17 +23,6 @@ class AuditWriteResult:
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
-
-
-def _build_s3_client(s3_settings: S3Settings):
-    client_kwargs: dict[str, Any] = {"service_name": "s3", "region_name": s3_settings.region_name}
-    if s3_settings.endpoint_url:
-        client_kwargs["endpoint_url"] = s3_settings.endpoint_url
-    if s3_settings.access_key_id:
-        client_kwargs["aws_access_key_id"] = s3_settings.access_key_id
-    if s3_settings.secret_access_key:
-        client_kwargs["aws_secret_access_key"] = s3_settings.secret_access_key
-    return boto3.client(**client_kwargs)
 
 
 def build_ingest_audit_record(
@@ -76,7 +64,7 @@ def write_ingest_audit_to_s3(
         window_end=window_end,
         ingest_batch_id=extraction_result.ingest_batch_id,
     )
-    client = _build_s3_client(config.s3)
+    client = build_s3_client(config.s3)
     client.put_object(
         Bucket=config.s3.bucket_name,
         Key=audit_s3_key,

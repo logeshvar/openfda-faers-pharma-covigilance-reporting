@@ -5,14 +5,28 @@ from dataclasses import asdict, dataclass
 from datetime import date
 from typing import Any
 
-import boto3
-
-from src.common.config import AppConfig, S3Settings
+from src.common.aws_clients import build_s3_client
+from src.common.config import AppConfig
 from src.common.path_builders import build_s3_uri, build_table_s3_uri
 from src.curated.build_case_header import (
     CASE_HEADER_KEY_COLUMNS,
     CASE_HEADER_PARTITION_COLUMNS,
     CURATED_CASE_HEADER_TABLE,
+)
+from src.curated.build_case_drug import (
+    CASE_DRUG_KEY_COLUMNS,
+    CASE_DRUG_PARTITION_COLUMNS,
+    CURATED_CASE_DRUG_TABLE,
+)
+from src.curated.build_case_drug_openfda import (
+    CASE_DRUG_OPENFDA_KEY_COLUMNS,
+    CASE_DRUG_OPENFDA_PARTITION_COLUMNS,
+    CURATED_CASE_DRUG_OPENFDA_TABLE,
+)
+from src.curated.build_case_reaction import (
+    CASE_REACTION_KEY_COLUMNS,
+    CASE_REACTION_PARTITION_COLUMNS,
+    CURATED_CASE_REACTION_TABLE,
 )
 from src.curated.build_patient_demo import (
     CURATED_PATIENT_DEMO_TABLE,
@@ -24,6 +38,13 @@ from src.curated.build_primary_source import (
     PRIMARY_SOURCE_KEY_COLUMNS,
     PRIMARY_SOURCE_PARTITION_COLUMNS,
 )
+from src.gold.build_gold_case_seriousness_trends import GOLD_CASE_SERIOUSNESS_TRENDS_TABLE
+from src.gold.build_gold_drug_reaction_trends import GOLD_DRUG_REACTION_TRENDS_TABLE
+from src.gold.build_gold_manufacturer_class_serious_trends import (
+    GOLD_MANUFACTURER_CLASS_SERIOUS_TRENDS_TABLE,
+)
+from src.gold.build_gold_reaction_demographic_trends import GOLD_REACTION_DEMOGRAPHIC_TRENDS_TABLE
+from src.gold.build_latest_case_helper import GOLD_LATEST_CASE_HELPER_TABLE
 from src.ingestion.extract_openfda import parse_window_date
 
 logger = logging.getLogger(__name__)
@@ -98,18 +119,34 @@ CURATED_TABLE_SPECS: dict[str, CuratedTableSpec] = {
         key_columns=PATIENT_DEMO_KEY_COLUMNS,
         partition_columns=PATIENT_DEMO_PARTITION_COLUMNS,
     ),
+    CURATED_CASE_DRUG_TABLE: CuratedTableSpec(
+        table_name=CURATED_CASE_DRUG_TABLE,
+        python_file="curated/build_case_drug.py",
+        key_columns=CASE_DRUG_KEY_COLUMNS,
+        partition_columns=CASE_DRUG_PARTITION_COLUMNS,
+    ),
+    CURATED_CASE_DRUG_OPENFDA_TABLE: CuratedTableSpec(
+        table_name=CURATED_CASE_DRUG_OPENFDA_TABLE,
+        python_file="curated/build_case_drug_openfda.py",
+        key_columns=CASE_DRUG_OPENFDA_KEY_COLUMNS,
+        partition_columns=CASE_DRUG_OPENFDA_PARTITION_COLUMNS,
+    ),
+    CURATED_CASE_REACTION_TABLE: CuratedTableSpec(
+        table_name=CURATED_CASE_REACTION_TABLE,
+        python_file="curated/build_case_reaction.py",
+        key_columns=CASE_REACTION_KEY_COLUMNS,
+        partition_columns=CASE_REACTION_PARTITION_COLUMNS,
+    ),
 }
 
-
-def _build_s3_client(s3_settings: S3Settings):
-    client_kwargs: dict[str, Any] = {"service_name": "s3", "region_name": s3_settings.region_name}
-    if s3_settings.endpoint_url:
-        client_kwargs["endpoint_url"] = s3_settings.endpoint_url
-    if s3_settings.access_key_id:
-        client_kwargs["aws_access_key_id"] = s3_settings.access_key_id
-    if s3_settings.secret_access_key:
-        client_kwargs["aws_secret_access_key"] = s3_settings.secret_access_key
-    return boto3.client(**client_kwargs)
+CURATED_TABLE_BUILD_ORDER = (
+    CURATED_CASE_HEADER_TABLE,
+    CURATED_PRIMARY_SOURCE_TABLE,
+    CURATED_PATIENT_DEMO_TABLE,
+    CURATED_CASE_DRUG_TABLE,
+    CURATED_CASE_DRUG_OPENFDA_TABLE,
+    CURATED_CASE_REACTION_TABLE,
+)
 
 
 def build_raw_window_prefix(raw_prefix: str, window_start: date, window_end: date) -> str:
@@ -143,7 +180,7 @@ def list_raw_batch_objects_for_window(
         window_start=parsed_window_start,
         window_end=parsed_window_end,
     )
-    client = _build_s3_client(config.s3)
+    client = build_s3_client(config.s3)
 
     paginator = client.get_paginator("list_objects_v2")
     page_iterator = paginator.paginate(Bucket=config.s3.bucket_name, Prefix=prefix)
@@ -269,11 +306,7 @@ def resolve_curated_job_manifests(
         window_end=window_end,
     )
     selected_batch = select_raw_batch_object(batch_objects, ingest_batch_id=ingest_batch_id)
-    selected_table_names = table_names or (
-        CURATED_CASE_HEADER_TABLE,
-        CURATED_PRIMARY_SOURCE_TABLE,
-        CURATED_PATIENT_DEMO_TABLE,
-    )
+    selected_table_names = table_names or CURATED_TABLE_BUILD_ORDER
 
     manifests = [
         build_curated_job_manifest_for_table(
@@ -333,3 +366,117 @@ def build_databricks_tasks_for_curated_manifests(
         )
 
     return tasks
+
+
+def _table_uri(config: AppConfig, layer_prefix: str, table_name: str) -> str:
+    return build_table_s3_uri(
+        bucket_name=config.s3.bucket_name,
+        layer_prefix=layer_prefix,
+        table_name=table_name,
+    )
+
+
+def _python_file(config: AppConfig, relative_path: str) -> str:
+    return "/".join([config.databricks.python_file_base_uri.rstrip("/"), relative_path.strip("/")])
+
+
+def build_databricks_tasks_for_gold(config: AppConfig) -> list[dict[str, Any]]:
+    latest_case_path = _table_uri(config, config.s3.gold_prefix, GOLD_LATEST_CASE_HELPER_TABLE)
+    case_header_path = _table_uri(config, config.s3.curated_prefix, CURATED_CASE_HEADER_TABLE)
+    primary_source_path = _table_uri(config, config.s3.curated_prefix, CURATED_PRIMARY_SOURCE_TABLE)
+    patient_demo_path = _table_uri(config, config.s3.curated_prefix, CURATED_PATIENT_DEMO_TABLE)
+    case_drug_path = _table_uri(config, config.s3.curated_prefix, CURATED_CASE_DRUG_TABLE)
+    case_drug_openfda_path = _table_uri(config, config.s3.curated_prefix, CURATED_CASE_DRUG_OPENFDA_TABLE)
+    case_reaction_path = _table_uri(config, config.s3.curated_prefix, CURATED_CASE_REACTION_TABLE)
+
+    return [
+        {
+            "task_key": f"build_{GOLD_LATEST_CASE_HELPER_TABLE}",
+            "job_cluster_key": "curated_job_cluster",
+            "depends_on": [{"task_key": f"build_{CURATED_CASE_HEADER_TABLE}"}],
+            "spark_python_task": {
+                "python_file": _python_file(config, "gold/build_latest_case_helper.py"),
+                "parameters": [
+                    "--case-header-path",
+                    case_header_path,
+                    "--output-path",
+                    latest_case_path,
+                ],
+            },
+        },
+        {
+            "task_key": f"build_{GOLD_CASE_SERIOUSNESS_TRENDS_TABLE}",
+            "job_cluster_key": "curated_job_cluster",
+            "depends_on": [{"task_key": f"build_{GOLD_LATEST_CASE_HELPER_TABLE}"}],
+            "spark_python_task": {
+                "python_file": _python_file(config, "gold/build_gold_case_seriousness_trends.py"),
+                "parameters": ["--latest-case-path", latest_case_path, "--output-path", _table_uri(config, config.s3.gold_prefix, GOLD_CASE_SERIOUSNESS_TRENDS_TABLE)],
+            },
+        },
+        {
+            "task_key": f"build_{GOLD_DRUG_REACTION_TRENDS_TABLE}",
+            "job_cluster_key": "curated_job_cluster",
+            "depends_on": [
+                {"task_key": f"build_{GOLD_LATEST_CASE_HELPER_TABLE}"},
+                {"task_key": f"build_{CURATED_CASE_DRUG_TABLE}"},
+                {"task_key": f"build_{CURATED_CASE_REACTION_TABLE}"},
+            ],
+            "spark_python_task": {
+                "python_file": _python_file(config, "gold/build_gold_drug_reaction_trends.py"),
+                "parameters": [
+                    "--latest-case-path",
+                    latest_case_path,
+                    "--case-drug-path",
+                    case_drug_path,
+                    "--case-reaction-path",
+                    case_reaction_path,
+                    "--output-path",
+                    _table_uri(config, config.s3.gold_prefix, GOLD_DRUG_REACTION_TRENDS_TABLE),
+                ],
+            },
+        },
+        {
+            "task_key": f"build_{GOLD_REACTION_DEMOGRAPHIC_TRENDS_TABLE}",
+            "job_cluster_key": "curated_job_cluster",
+            "depends_on": [
+                {"task_key": f"build_{GOLD_LATEST_CASE_HELPER_TABLE}"},
+                {"task_key": f"build_{CURATED_CASE_REACTION_TABLE}"},
+                {"task_key": f"build_{CURATED_PATIENT_DEMO_TABLE}"},
+                {"task_key": f"build_{CURATED_PRIMARY_SOURCE_TABLE}"},
+            ],
+            "spark_python_task": {
+                "python_file": _python_file(config, "gold/build_gold_reaction_demographic_trends.py"),
+                "parameters": [
+                    "--latest-case-path",
+                    latest_case_path,
+                    "--reaction-path",
+                    case_reaction_path,
+                    "--patient-demo-path",
+                    patient_demo_path,
+                    "--primary-source-path",
+                    primary_source_path,
+                    "--output-path",
+                    _table_uri(config, config.s3.gold_prefix, GOLD_REACTION_DEMOGRAPHIC_TRENDS_TABLE),
+                ],
+            },
+        },
+        {
+            "task_key": f"build_{GOLD_MANUFACTURER_CLASS_SERIOUS_TRENDS_TABLE}",
+            "job_cluster_key": "curated_job_cluster",
+            "depends_on": [
+                {"task_key": f"build_{GOLD_LATEST_CASE_HELPER_TABLE}"},
+                {"task_key": f"build_{CURATED_CASE_DRUG_OPENFDA_TABLE}"},
+            ],
+            "spark_python_task": {
+                "python_file": _python_file(config, "gold/build_gold_manufacturer_class_serious_trends.py"),
+                "parameters": [
+                    "--latest-case-path",
+                    latest_case_path,
+                    "--case-drug-openfda-path",
+                    case_drug_openfda_path,
+                    "--output-path",
+                    _table_uri(config, config.s3.gold_prefix, GOLD_MANUFACTURER_CLASS_SERIOUS_TRENDS_TABLE),
+                ],
+            },
+        },
+    ]

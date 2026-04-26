@@ -12,11 +12,13 @@ from src.common.config import load_config
 from src.common.path_builders import build_ingest_batch_id
 from src.dq.raw_checks import raise_for_failed_checks, run_raw_checks
 from src.ingestion.extract_openfda import (
+    cleanup_staged_extraction,
     extract_openfda_window,
     load_staged_extraction,
     parse_window_date,
     stage_extraction_result,
 )
+from src.ingestion.windowing import resolve_lagged_daily_window
 from src.ingestion.write_ingest_audit import build_ingest_audit_record, write_ingest_audit_to_s3
 from src.ingestion.write_raw_s3 import RawWriteResult, write_raw_batch_to_s3
 
@@ -25,18 +27,12 @@ CONFIG = load_config()
 
 
 def _default_window_from_context(context: dict[str, Any]) -> tuple[str, str]:
-    interval_start = context.get("data_interval_start")
-    interval_end = context.get("data_interval_end")
-
-    if interval_start and interval_end:
-        window_start = interval_start.date()
-        window_end = (interval_end - timedelta(days=1)).date()
-        return window_start.isoformat(), window_end.isoformat()
-
-    logical_date = context["logical_date"].date()
-    previous_month_end = logical_date.replace(day=1) - timedelta(days=1)
-    previous_month_start = previous_month_end.replace(day=1)
-    return previous_month_start.isoformat(), previous_month_end.isoformat()
+    window_start, window_end = resolve_lagged_daily_window(
+        reference_date=context["logical_date"],
+        source_lag_days=CONFIG.ingestion.source_lag_days,
+        default_window_days=CONFIG.ingestion.default_window_days,
+    )
+    return window_start.isoformat(), window_end.isoformat()
 
 
 @dag(
@@ -49,6 +45,10 @@ def _default_window_from_context(context: dict[str, Any]) -> tuple[str, str]:
     default_args={"owner": "data-eng", "retries": 2, "retry_delay": timedelta(minutes=5)},
     doc_md="""
     ## Raw openFDA ingestion DAG
+
+    openFDA FAERS data is published quarterly and can lag by 3+ months. Scheduled
+    runs therefore ingest a small stable window behind a configurable lag instead
+    of querying the newest month or a full quarter.
 
     Manual backfill overrides can be supplied with `dag_run.conf`:
 
@@ -147,6 +147,9 @@ def openfda_ingest_raw():
             raw_write_result.s3_uri,
             audit_write_result.s3_uri,
         )
+
+        if CONFIG.ingestion.cleanup_staging_files:
+            cleanup_staged_extraction(stage_manifest["staged_file_path"])
 
         raise_for_failed_checks(dq_summary)
 

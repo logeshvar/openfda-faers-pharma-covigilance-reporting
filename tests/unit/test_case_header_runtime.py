@@ -12,11 +12,13 @@ from src.common.config import (
     DQSettings,
     IngestionSettings,
     LoggingSettings,
+    MetadataSettings,
     OpenFDASettings,
     ProjectSettings,
     S3Settings,
 )
 from src.curated.case_header_runtime import (
+    build_databricks_tasks_for_gold,
     build_databricks_tasks_for_curated_manifests,
     build_raw_window_prefix,
     list_raw_batch_objects_for_window,
@@ -57,10 +59,15 @@ def _build_test_config(endpoint_url: str | None = None) -> AppConfig:
             node_type_id="i3.xlarge",
             num_workers=1,
         ),
+        metadata=MetadataSettings(
+            glue_database_name="pharma_cv_test",
+            athena_results_s3_uri="s3://pharma-cv-test/ops/athena-results/",
+        ),
         ingestion=IngestionSettings(
             source_name="openfda_drug_event",
             schedule="@monthly",
             local_staging_dir=Path("/tmp/openfda"),
+            cleanup_staging_files=True,
         ),
         dq=DQSettings(min_expected_records=0, required_raw_fields=("safetyreportid",)),
         logging=LoggingSettings(level="INFO"),
@@ -149,7 +156,7 @@ def test_resolve_case_header_job_manifest_selects_latest_batch_by_default() -> N
 
 
 @mock_aws
-def test_resolve_curated_job_manifests_prepares_milestone_2_and_3_tables() -> None:
+def test_resolve_curated_job_manifests_prepares_all_curated_tables() -> None:
     config = _build_test_config()
     client = boto3.client("s3", region_name=config.s3.region_name)
     client.create_bucket(Bucket=config.s3.bucket_name)
@@ -174,11 +181,17 @@ def test_resolve_curated_job_manifests_prepares_milestone_2_and_3_tables() -> No
         "curated_case_header",
         "curated_primary_source",
         "curated_patient_demo",
+        "curated_case_drug",
+        "curated_case_drug_openfda",
+        "curated_case_reaction",
     ]
     assert [manifest.curated_output_s3_uri for manifest in manifests] == [
         "s3://pharma-cv-test/curated/curated_case_header",
         "s3://pharma-cv-test/curated/curated_primary_source",
         "s3://pharma-cv-test/curated/curated_patient_demo",
+        "s3://pharma-cv-test/curated/curated_case_drug",
+        "s3://pharma-cv-test/curated/curated_case_drug_openfda",
+        "s3://pharma-cv-test/curated/curated_case_reaction",
     ]
 
 
@@ -210,3 +223,20 @@ def test_build_databricks_tasks_for_curated_manifests_builds_spark_python_tasks(
             },
         }
     ]
+
+
+def test_build_databricks_tasks_for_gold_builds_dependency_aware_tasks() -> None:
+    config = _build_test_config()
+
+    tasks = build_databricks_tasks_for_gold(config=config)
+    task_keys = [task["task_key"] for task in tasks]
+
+    assert task_keys == [
+        "build_gold_latest_case_helper",
+        "build_gold_case_seriousness_trends",
+        "build_gold_drug_reaction_trends",
+        "build_gold_reaction_demographic_trends",
+        "build_gold_manufacturer_class_serious_trends",
+    ]
+    assert tasks[0]["depends_on"] == [{"task_key": "build_curated_case_header"}]
+    assert "--case-header-path" in tasks[0]["spark_python_task"]["parameters"]

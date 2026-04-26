@@ -9,6 +9,8 @@ from typing import Any
 import yaml
 from dotenv import load_dotenv
 
+from src.common.secrets import load_json_secret
+
 ROOT_DIR = Path(__file__).resolve().parents[2]
 DEFAULT_CONFIG_PATH = ROOT_DIR / "conf" / "dev.yaml"
 DEFAULT_DOTENV_PATH = ROOT_DIR / ".env"
@@ -58,10 +60,19 @@ class DatabricksSettings:
 
 
 @dataclass(frozen=True)
+class MetadataSettings:
+    glue_database_name: str
+    athena_results_s3_uri: str
+
+
+@dataclass(frozen=True)
 class IngestionSettings:
     source_name: str
     schedule: str
     local_staging_dir: Path
+    cleanup_staging_files: bool = True
+    source_lag_days: int = 120
+    default_window_days: int = 1
 
 
 @dataclass(frozen=True)
@@ -81,6 +92,7 @@ class AppConfig:
     s3: S3Settings
     openfda: OpenFDASettings
     databricks: DatabricksSettings
+    metadata: MetadataSettings
     ingestion: IngestionSettings
     dq: DQSettings
     logging: LoggingSettings
@@ -141,6 +153,34 @@ def _resolve_path(root_dir: Path, value: str | Path) -> Path:
     if candidate.is_absolute():
         return candidate
     return (root_dir / candidate).resolve()
+
+
+def _load_databricks_secret(config_data: dict[str, Any], region_name: str) -> dict[str, Any]:
+    secret_id = _first_env("DATABRICKS_SECRET_ID") or _get_nested(
+        config_data, "databricks", "secret_id", default=None
+    )
+    if not secret_id:
+        return {}
+    return load_json_secret(str(secret_id), region_name=region_name)
+
+
+def _env_secret_or_default(
+    env_name: str,
+    secret_payload: dict[str, Any],
+    secret_key_env_name: str,
+    default_secret_key: str,
+    default: Any,
+) -> Any:
+    env_value = _first_env(env_name)
+    if env_value is not None:
+        return env_value
+
+    secret_key = _first_env(secret_key_env_name) or default_secret_key
+    secret_value = secret_payload.get(secret_key)
+    if secret_value not in (None, ""):
+        return secret_value
+
+    return default
 
 
 @lru_cache(maxsize=4)
@@ -207,6 +247,8 @@ def load_config(config_path: str | Path | None = None) -> AppConfig:
         ),
     )
 
+    databricks_secret = _load_databricks_secret(config_data, region_name=s3.region_name)
+
     databricks = DatabricksSettings(
         submit_enabled=_as_bool(
             _env_or_default(
@@ -214,10 +256,20 @@ def load_config(config_path: str | Path | None = None) -> AppConfig:
                 _get_nested(config_data, "databricks", "submit_enabled", default=False),
             )
         ),
-        host=_first_env("DATABRICKS_HOST")
-        or _get_nested(config_data, "databricks", "host", default=None),
-        token=_first_env("DATABRICKS_TOKEN")
-        or _get_nested(config_data, "databricks", "token", default=None),
+        host=_env_secret_or_default(
+            "DATABRICKS_HOST",
+            databricks_secret,
+            "DATABRICKS_HOST_SECRET_KEY",
+            "host",
+            _get_nested(config_data, "databricks", "host", default=None),
+        ),
+        token=_env_secret_or_default(
+            "DATABRICKS_TOKEN",
+            databricks_secret,
+            "DATABRICKS_TOKEN_SECRET_KEY",
+            "token",
+            _get_nested(config_data, "databricks", "token", default=None),
+        ),
         run_name_prefix=str(
             _env_or_default(
                 "DATABRICKS_RUN_NAME_PREFIX",
@@ -225,8 +277,11 @@ def load_config(config_path: str | Path | None = None) -> AppConfig:
             )
         ),
         python_file_base_uri=str(
-            _env_or_default(
+            _env_secret_or_default(
                 "DATABRICKS_PYTHON_FILE_BASE_URI",
+                databricks_secret,
+                "DATABRICKS_PYTHON_FILE_BASE_URI_SECRET_KEY",
+                "python_file_base_uri",
                 _get_nested(
                     config_data,
                     "databricks",
@@ -255,11 +310,49 @@ def load_config(config_path: str | Path | None = None) -> AppConfig:
         ),
     )
 
+    metadata = MetadataSettings(
+        glue_database_name=str(
+            _env_or_default(
+                "GLUE_DATABASE_NAME",
+                _get_nested(config_data, "metadata", "glue_database_name", default="pharma_cv_dev"),
+            )
+        ),
+        athena_results_s3_uri=str(
+            _env_or_default(
+                "ATHENA_RESULTS_S3_URI",
+                _get_nested(
+                    config_data,
+                    "metadata",
+                    "athena_results_s3_uri",
+                    default=f"s3://{s3.bucket_name}/ops/athena-results/",
+                ),
+            )
+        ),
+    )
+
     ingestion = IngestionSettings(
         source_name=str(_get_nested(config_data, "ingestion", "source_name", default="openfda_drug_event")),
-        schedule=str(_get_nested(config_data, "ingestion", "schedule", default="@monthly")),
+        schedule=str(_get_nested(config_data, "ingestion", "schedule", default="0 6 * * *")),
         local_staging_dir=_resolve_path(
             ROOT_DIR, str(_get_nested(config_data, "ingestion", "local_staging_dir", default=".tmp/openfda"))
+        ),
+        cleanup_staging_files=_as_bool(
+            _env_or_default(
+                "OPENFDA_CLEANUP_STAGING_FILES",
+                _get_nested(config_data, "ingestion", "cleanup_staging_files", default=True),
+            )
+        ),
+        source_lag_days=_as_int(
+            _env_or_default(
+                "OPENFDA_SOURCE_LAG_DAYS",
+                _get_nested(config_data, "ingestion", "source_lag_days", default=120),
+            )
+        ),
+        default_window_days=_as_int(
+            _env_or_default(
+                "OPENFDA_DEFAULT_WINDOW_DAYS",
+                _get_nested(config_data, "ingestion", "default_window_days", default=1),
+            )
         ),
     )
 
@@ -279,6 +372,7 @@ def load_config(config_path: str | Path | None = None) -> AppConfig:
         s3=s3,
         openfda=openfda,
         databricks=databricks,
+        metadata=metadata,
         ingestion=ingestion,
         dq=dq,
         logging=logging,

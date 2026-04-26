@@ -21,15 +21,17 @@ flowchart LR
     G --> H["case_header_runtime.py<br/>select latest raw batch"]
     H --> I["Databricks Jobs API payload"]
     I --> J["Spark/Delta curated jobs"]
-    J --> K["curated_case_header"]
-    J --> L["curated_primary_source"]
-    J --> M["curated_patient_demo"]
+    J --> K["Curated Delta tables"]
+    K --> L["Gold Delta tables"]
+    L --> M["Glue Catalog registration"]
+    M --> N["Athena validation and views"]
 ```
 
 ## Current Code Path
 
 The implemented ingestion flow is fully runnable locally today:
-- Airflow resolves the monthly or manual batch window.
+- Airflow resolves a lagged daily scheduled window or a manual batch window.
+- Scheduled raw ingestion runs behind a configurable source lag because FAERS/openFDA is updated quarterly and may lag by 3+ months.
 - The openFDA client paginates the API by `receivedate`.
 - Raw records are wrapped in bronze-style envelopes and written as immutable NDJSON.
 - A batch audit document is written even when raw DQ fails.
@@ -38,8 +40,20 @@ The current curated scope includes:
 - `curated_case_header`
 - `curated_primary_source`
 - `curated_patient_demo`
+- `curated_case_drug`
+- `curated_case_drug_openfda`
+- `curated_case_reaction`
 
-The Airflow curated DAG now prepares a Databricks Jobs API `runs/submit` payload. In dev, submission is disabled by default so the payload can be reviewed without needing live Databricks credentials. In the AWS-oriented config, submission is enabled and requires `DATABRICKS_HOST` plus `DATABRICKS_TOKEN` from the runtime environment or a secrets backend.
+The current gold scope includes:
+- `gold_latest_case_helper`
+- `gold_case_seriousness_trends`
+- `gold_drug_reaction_trends`
+- `gold_reaction_demographic_trends`
+- `gold_manufacturer_class_serious_trends`
+
+The Airflow curated/gold DAG now prepares a Databricks Jobs API `runs/submit` payload. In dev, submission is disabled by default so the payload can be reviewed without needing live Databricks credentials. In the AWS-oriented config, submission is enabled and requires `DATABRICKS_HOST` plus `DATABRICKS_TOKEN` from the runtime environment or a secrets backend.
+
+After Databricks finishes, `openfda_refresh_metadata` can register the Delta table locations for Glue/Athena.
 
 ## Target AWS Architecture
 

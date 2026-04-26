@@ -1,0 +1,83 @@
+from __future__ import annotations
+
+import argparse
+import logging
+from dataclasses import asdict, dataclass
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from pyspark.sql import DataFrame, SparkSession
+
+logger = logging.getLogger(__name__)
+
+GOLD_LATEST_CASE_HELPER_TABLE = "gold_latest_case_helper"
+
+
+@dataclass(frozen=True)
+class GoldJobResult:
+    output_path: str
+    records_written: int
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+def build_latest_case_df(case_header_df: "DataFrame") -> "DataFrame":
+    from pyspark.sql import Window
+    from pyspark.sql import functions as F
+
+    latest_window = Window.partitionBy("safetyreportid").orderBy(
+        F.col("safetyreportversion").cast("int").desc_nulls_last(),
+        F.col("load_timestamp").desc_nulls_last(),
+        F.col("ingest_batch_id").desc_nulls_last(),
+    )
+
+    return (
+        case_header_df.withColumn("_row_num", F.row_number().over(latest_window))
+        .filter(F.col("_row_num") == 1)
+        .drop("_row_num")
+    )
+
+
+def write_delta(df: "DataFrame", output_path: str, partition_columns: list[str] | None = None) -> None:
+    writer = df.write.format("delta").mode("overwrite")
+    if partition_columns:
+        writer = writer.partitionBy(*partition_columns)
+    writer.save(output_path)
+
+
+def run_latest_case_helper_job(
+    spark: "SparkSession", case_header_path: str, output_path: str
+) -> GoldJobResult:
+    case_header_df = spark.read.format("delta").load(case_header_path)
+    latest_df = build_latest_case_df(case_header_df)
+    records_written = latest_df.count()
+    write_delta(latest_df, output_path=output_path, partition_columns=["report_year", "report_month"])
+    return GoldJobResult(output_path=output_path, records_written=records_written)
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Build latest case helper from curated_case_header.")
+    parser.add_argument("--case-header-path", required=True)
+    parser.add_argument("--output-path", required=True)
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    from pyspark.sql import SparkSession
+
+    args = parse_args(argv)
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s - %(message)s")
+    spark = SparkSession.builder.appName("build_latest_case_helper").getOrCreate()
+    try:
+        logger.info(
+            "Job complete: %s",
+            run_latest_case_helper_job(spark, args.case_header_path, args.output_path).to_dict(),
+        )
+    finally:
+        spark.stop()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

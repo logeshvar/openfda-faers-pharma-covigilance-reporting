@@ -160,3 +160,13 @@ def load_staged_extraction(staged_file_path: str | Path) -> ExtractionResult:
         records_fetched=int(payload["records_fetched"]),
         records=list(payload.get("records", [])),
     )
+
+
+def cleanup_staged_extraction(staged_file_path: str | Path) -> bool:
+    path = Path(staged_file_path).expanduser()
+    if not path.exists():
+        return False
+
+    path.unlink()
+    logger.info("Removed staged extraction file %s", path)
+    return True

@@ -13,9 +13,12 @@ Current implementation status:
 - Milestone 1 implemented
 - Milestone 2 implemented
 - Milestone 3 implemented
+- Milestone 4 implemented
+- Gold reporting layer implemented
+- Glue/Athena metadata support implemented
 - Raw ingestion path working end to end
 - Curated transforms implemented for `curated_case_header`, `curated_primary_source`, and `curated_patient_demo`
-- Curated orchestration DAG prepares a Databricks Jobs API payload and can submit it when enabled
+- Curated/gold orchestration DAG prepares a Databricks Jobs API payload and can submit it when enabled
 
 ## Architecture
 
@@ -75,10 +78,25 @@ Implemented:
 - Python normalization tests for qualification labels, sex labels, age unit labels, age conversion, age bands, and latest-row dedupe
 - Databricks task generation for the three curated Spark scripts
 
+## Milestone 4 Progress
+
+Implemented:
+- `src/curated/build_case_drug.py` for one row per drug within a report version
+- `src/curated/build_case_drug_openfda.py` for openFDA drug arrays
+- `src/curated/build_case_reaction.py` for one row per reaction within a report version
+
+## Gold And Metadata Progress
+
+Implemented:
+- latest-case helper for gold reporting
+- gold seriousness trend table
+- gold drug-reaction co-reporting trend table
+- gold reaction demographic trend table
+- gold manufacturer/class seriousness trend table
+- Glue/Athena registration helper and `openfda_refresh_metadata` DAG
+- Athena validation SQL and basic reporting views
+
 Deferred to later milestones:
-- remaining curated drug and reaction tables
-- Glue Catalog and Athena refresh
-- gold reporting datasets
 - Bedrock summaries
 
 ## Quick Start
@@ -124,13 +142,17 @@ MinIO:
 ```bash
 docker compose exec airflow-scheduler airflow dags list | grep openfda_ingest_raw
 docker compose exec airflow-scheduler airflow dags list | grep openfda_build_curated_gold
+docker compose exec airflow-scheduler airflow dags list | grep openfda_refresh_metadata
 ```
 
 ### 4. Trigger a manual backfill run
 
+For smoke tests, prefer a one-day window. Larger month or quarter windows can exceed
+the openFDA API pagination cap and should be split into smaller backfills.
+
 ```bash
 docker compose exec airflow-scheduler airflow dags trigger openfda_ingest_raw \
-  --conf '{"window_start":"2026-03-01","window_end":"2026-03-31","page_size":100,"max_pages":50}'
+  --conf '{"window_start":"2025-03-01","window_end":"2025-03-01","page_size":100,"max_pages":50}'
 ```
 
 ### 5. Inspect logs
@@ -149,20 +171,31 @@ docker compose logs -f airflow-scheduler
 5. writes immutable raw NDJSON to the raw S3 prefix when DQ passes
 6. writes an ingest audit record to the ops S3 prefix
 
+Scheduled raw ingestion is source-lag aware. Because FAERS/openFDA updates are quarterly
+and may lag by 3+ months, the default schedule runs daily but ingests a one-day window
+120 days behind the Airflow logical date. This keeps API calls small, avoids partial
+large-month extracts, and only processes data that is likely to be stable.
+
 `openfda_build_curated_gold` currently does the following for Milestone 2:
 1. resolves the requested reporting window
 2. lists raw NDJSON objects for that window from S3-compatible storage
 3. selects the latest `ingest_batch_id` unless one is explicitly supplied
-4. prepares job manifests for `curated_case_header`, `curated_primary_source`, and `curated_patient_demo`
+4. prepares job manifests for all curated tables
 5. builds a Databricks Jobs API `runs/submit` payload
-6. submits the run only when `DATABRICKS_SUBMIT_ENABLED=true`; otherwise it logs a dry-run result
+6. includes dependency-aware gold table tasks in the same payload
+7. submits the run only when `DATABRICKS_SUBMIT_ENABLED=true`; otherwise it logs a dry-run result
+
+`openfda_refresh_metadata` currently does the following:
+1. prepares Athena DDL for curated and gold Delta table locations
+2. creates the Glue database and starts Athena DDL queries only when triggered with `{"execute_refresh": true}`
+3. returns the Athena query execution IDs for follow-up monitoring
 
 Manual backfill parameters:
 
 ```json
 {
-  "window_start": "2026-03-01",
-  "window_end": "2026-03-31",
+  "window_start": "2025-03-01",
+  "window_end": "2025-03-01",
   "page_size": 100,
   "max_pages": 200
 }
@@ -180,6 +213,16 @@ Curated data target:
 - `curated/curated_case_header`
 - `curated/curated_primary_source`
 - `curated/curated_patient_demo`
+- `curated/curated_case_drug`
+- `curated/curated_case_drug_openfda`
+- `curated/curated_case_reaction`
+
+Gold data target:
+- `gold/gold_latest_case_helper`
+- `gold/gold_case_seriousness_trends`
+- `gold/gold_drug_reaction_trends`
+- `gold/gold_reaction_demographic_trends`
+- `gold/gold_manufacturer_class_serious_trends`
 
 ## Target AWS Configuration
 

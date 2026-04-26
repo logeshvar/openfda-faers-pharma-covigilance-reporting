@@ -8,6 +8,8 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Iterable, Mapping
 
+from src.common.normalization import as_text as _as_text
+
 if TYPE_CHECKING:
     from pyspark.sql import DataFrame, SparkSession
 
@@ -27,12 +29,6 @@ class CuratedCaseHeaderJobResult:
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
-
-
-def _as_text(value: Any) -> str | None:
-    if value in (None, ""):
-        return None
-    return str(value)
 
 
 def parse_openfda_date(value: Any) -> date | None:

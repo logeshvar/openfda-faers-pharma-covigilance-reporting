@@ -11,6 +11,7 @@ from airflow.operators.python import get_current_context
 from src.common.databricks_jobs import build_databricks_submit_run_payload, submit_databricks_run
 from src.common.config import load_config
 from src.curated.case_header_runtime import (
+    build_databricks_tasks_for_gold,
     build_databricks_tasks_for_curated_manifests,
     resolve_curated_job_manifests,
 )
@@ -44,18 +45,22 @@ def _default_window_from_context(context: dict[str, Any]) -> tuple[str, str]:
     doc_md="""
     ## Curated and gold build DAG
 
-    Current curated scope:
+    Current build scope:
     - `curated_case_header`
     - `curated_primary_source`
     - `curated_patient_demo`
+    - `curated_case_drug`
+    - `curated_case_drug_openfda`
+    - `curated_case_reaction`
+    - gold reporting tables
 
     Manual overrides can be supplied with `dag_run.conf`:
 
     ```json
     {
-      "window_start": "2026-03-01",
-      "window_end": "2026-03-31",
-      "ingest_batch_id": "openfda_drug_event_20260301_20260331_20260421T035810Z"
+      "window_start": "2025-03-01",
+      "window_end": "2025-03-31",
+      "ingest_batch_id": "openfda_drug_event_20250301_20250331_20260421T035810Z"
     }
     ```
     """,
@@ -100,9 +105,12 @@ def openfda_build_curated_gold():
 
     @task
     def build_databricks_payload(curated_manifests: list[dict[str, Any]]) -> dict[str, Any]:
-        tasks = build_databricks_tasks_for_curated_manifests(config=CONFIG, manifests=curated_manifests)
+        tasks = build_databricks_tasks_for_curated_manifests(
+            config=CONFIG,
+            manifests=curated_manifests,
+        ) + build_databricks_tasks_for_gold(config=CONFIG)
         run_name = (
-            f"{CONFIG.databricks.run_name_prefix}_curated_"
+            f"{CONFIG.databricks.run_name_prefix}_curated_gold_"
             f"{curated_manifests[0]['query_window_start']}_{curated_manifests[0]['query_window_end']}"
         )
         return build_databricks_submit_run_payload(config=CONFIG, run_name=run_name, tasks=tasks)

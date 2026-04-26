@@ -1,0 +1,37 @@
+curated:
+  curated_case_header:
+    key_columns: [safetyreportid, safetyreportversion]
+    partition_columns: [report_year, report_month]
+  curated_primary_source:
+    key_columns: [safetyreportid, safetyreportversion]
+    partition_columns: []
+  curated_patient_demo:
+    key_columns: [safetyreportid, safetyreportversion]
+    partition_columns: []
+  curated_case_drug:
+    key_columns: [safetyreportid, safetyreportversion, drug_seq_num]
+    partition_columns: []
+  curated_case_drug_openfda:
+    key_columns: [safetyreportid, safetyreportversion, drug_seq_num]
+    partition_columns: []
+  curated_case_reaction:
+    key_columns: [safetyreportid, safetyreportversion, reaction_seq_num]
+    partition_columns: []
+
+gold:
+  gold_latest_case_helper:
+    grain: latest report version per safetyreportid
+    partition_columns: [report_year, report_month]
+  gold_case_seriousness_trends:
+    grain: report month and seriousness rollup
+    partition_columns: [report_year, report_month]
+  gold_drug_reaction_trends:
+    grain: report month, co-reported drug, and co-reported reaction
+    partition_columns: [report_year, report_month]
+    modeling_note: drug and reaction are co-reported in the same case version; this is not causality.
+  gold_reaction_demographic_trends:
+    grain: report month, reaction, sex, age band, reporter country
+    partition_columns: [report_year, report_month]
+  gold_manufacturer_class_serious_trends:
+    grain: report month, manufacturer, pharmacologic class
+    partition_columns: [report_year, report_month]

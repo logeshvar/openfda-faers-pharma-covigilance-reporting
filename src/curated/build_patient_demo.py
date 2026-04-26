@@ -5,6 +5,9 @@ import logging
 from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING, Any, Iterable, Mapping
 
+from src.common.normalization import as_float as _as_float
+from src.common.normalization import as_text as _as_text
+
 if TYPE_CHECKING:
     from pyspark.sql import DataFrame, SparkSession
 
@@ -37,22 +40,6 @@ class CuratedPatientDemoJobResult:
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
-
-
-def _as_text(value: Any) -> str | None:
-    if value in (None, ""):
-        return None
-    return str(value)
-
-
-def _as_float(value: Any) -> float | None:
-    if value in (None, ""):
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        logger.warning("Unable to parse numeric value=%s", value)
-        return None
 
 
 def patientsex_label(patientsex_code: Any) -> str | None:
