@@ -8,7 +8,12 @@ import pendulum
 from airflow.decorators import dag, task
 from airflow.operators.python import get_current_context
 
-from src.common.databricks_jobs import build_databricks_submit_run_payload, submit_databricks_run
+from src.common.databricks_jobs import (
+    build_databricks_saved_job_settings,
+    build_databricks_submit_run_payload,
+    submit_databricks_run,
+    submit_databricks_saved_job,
+)
 from src.common.config import load_config
 from src.curated.case_header_runtime import (
     build_databricks_tasks_for_gold,
@@ -123,19 +128,40 @@ def openfda_build_curated_gold():
             f"{CONFIG.databricks.run_name_prefix}_curated_gold_"
             f"{curated_manifests[0]['query_window_start']}_{curated_manifests[0]['query_window_end']}"
         )
-        return build_databricks_submit_run_payload(config=CONFIG, run_name=run_name, tasks=tasks)
+        if CONFIG.databricks.submission_mode == "saved_job":
+            return {
+                "submission_mode": "saved_job",
+                "job_settings": build_databricks_saved_job_settings(
+                    config=CONFIG,
+                    job_name=CONFIG.databricks.job_name or f"{CONFIG.databricks.run_name_prefix}-curated-gold",
+                    tasks=tasks,
+                ),
+            }
+
+        return {
+            "submission_mode": "runs_submit",
+            "payload": build_databricks_submit_run_payload(config=CONFIG, run_name=run_name, tasks=tasks),
+        }
 
     @task
     def submit_or_log_databricks_run(runtime_options: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
         config = load_config(include_databricks_secrets=not runtime_options["dry_run"])
-        result = submit_databricks_run(
-            config=config,
-            payload=payload,
-            dry_run=runtime_options["dry_run"],
-        )
+        if payload["submission_mode"] == "saved_job":
+            result = submit_databricks_saved_job(
+                config=config,
+                job_settings=payload["job_settings"],
+                dry_run=runtime_options["dry_run"],
+            )
+        else:
+            result = submit_databricks_run(
+                config=config,
+                payload=payload["payload"],
+                dry_run=runtime_options["dry_run"],
+            )
         logger.info(
-            "Databricks curated run result submitted=%s run_id=%s url=%s message=%s",
+            "Databricks curated run result submitted=%s job_id=%s run_id=%s url=%s message=%s",
             result.submitted,
+            result.job_id,
             result.run_id,
             result.run_page_url,
             result.message,

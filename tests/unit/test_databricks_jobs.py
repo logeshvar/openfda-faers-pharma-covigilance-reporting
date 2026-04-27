@@ -14,6 +14,7 @@ from src.common.config import (
     S3Settings,
 )
 from src.common.databricks_jobs import (
+    build_databricks_saved_job_settings,
     build_databricks_smoke_test_payload,
     build_databricks_submit_run_payload,
     submit_databricks_run,
@@ -119,3 +120,31 @@ def test_build_databricks_smoke_test_payload_uses_git_source() -> None:
     assert payload["tasks"][0]["spark_python_task"]["source"] == "GIT"
     assert "job_cluster_key" not in payload["tasks"][0]
     assert payload["tasks"][0]["new_cluster"]["spark_version"] == "14.3.x-scala2.12"
+
+
+def test_build_databricks_saved_job_settings_uses_shared_job_cluster() -> None:
+    config = _build_test_config()
+
+    settings = build_databricks_saved_job_settings(
+        config=config,
+        job_name="pharma-cv-curated-gold",
+        tasks=[
+            {
+                "task_key": "build_curated_case_header",
+                "job_cluster_key": "pharma_cv_job_cluster",
+                "spark_python_task": {
+                    "python_file": "src/curated/build_case_header.py",
+                    "source": "GIT",
+                    "parameters": [],
+                },
+            }
+        ],
+    )
+
+    assert settings["name"] == "pharma-cv-curated-gold"
+    assert settings["max_concurrent_runs"] == 1
+    assert settings["job_clusters"][0]["job_cluster_key"] == "pharma_cv_job_cluster"
+    assert settings["job_clusters"][0]["new_cluster"]["spark_version"] == "14.3.x-scala2.12"
+    assert settings["tasks"][0]["job_cluster_key"] == "pharma_cv_job_cluster"
+    assert "new_cluster" not in settings["tasks"][0]
+    assert settings["git_source"]["git_branch"] == "main"

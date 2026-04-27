@@ -51,7 +51,7 @@ The current gold scope includes:
 - `gold_reaction_demographic_trends`
 - `gold_manufacturer_class_serious_trends`
 
-The Airflow curated/gold DAG now prepares a Git-backed Databricks Jobs API `runs/submit` payload. In dev, submission is disabled by default so the payload can be reviewed without needing live Databricks credentials. In the AWS-oriented config, submission is enabled and reads Databricks `host` and `token` from AWS Secrets Manager. The job cluster uses the configured AWS instance profile to read and write S3 raw, curated, gold, and ops paths.
+The Airflow curated/gold DAG now prepares Git-backed Databricks saved-job settings with a shared job cluster. In dev, submission is disabled by default so the job settings can be reviewed without needing live Databricks credentials. In the AWS-oriented config, submission is enabled and reads Databricks `host` and `token` from AWS Secrets Manager, creates or resets the saved job, and triggers `run-now`. The shared job cluster uses the configured AWS instance profile to read and write S3 raw, curated, gold, and ops paths.
 
 After Databricks finishes, `openfda_refresh_metadata` can register the Delta table locations for Glue/Athena.
 

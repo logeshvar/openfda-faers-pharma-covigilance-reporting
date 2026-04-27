@@ -57,6 +57,8 @@ class DatabricksSettings:
     spark_version: str
     node_type_id: str
     num_workers: int
+    submission_mode: str = "runs_submit"
+    job_name: str | None = None
     secret_id: str | None = None
     execution_source: str = "s3"
     git_url: str | None = None
@@ -297,6 +299,14 @@ def load_config(
                 _get_nested(config_data, "databricks", "run_name_prefix", default="pharma-cv"),
             )
         ),
+        submission_mode=str(
+            _env_or_default(
+                "DATABRICKS_SUBMISSION_MODE",
+                _get_nested(config_data, "databricks", "submission_mode", default="runs_submit"),
+            )
+        ).lower(),
+        job_name=_first_env("DATABRICKS_JOB_NAME")
+        or _get_nested(config_data, "databricks", "job_name", default=None),
         execution_source=str(
             _env_or_default(
                 "DATABRICKS_EXECUTION_SOURCE",

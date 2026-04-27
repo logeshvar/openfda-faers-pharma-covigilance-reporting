@@ -191,9 +191,9 @@ large-month extracts, and only processes data that is likely to be stable.
 2. lists raw NDJSON objects for that window from S3-compatible storage
 3. selects the latest `ingest_batch_id` unless one is explicitly supplied
 4. prepares job manifests for all curated tables
-5. builds a Git-backed Databricks Jobs API `runs/submit` payload
-6. includes dependency-aware gold table tasks in the same payload
-7. submits the run only when `DATABRICKS_SUBMIT_ENABLED=true`; otherwise it logs a dry-run result
+5. builds Git-backed Databricks saved-job settings with a shared job cluster
+6. includes dependency-aware gold table tasks in the same job
+7. creates or resets the saved Databricks job and triggers `run-now` when `DATABRICKS_SUBMIT_ENABLED=true`; otherwise it logs a dry-run result
 
 For manual curated/gold builds, use the same `window_start` / `window_end` that already
 exists in raw storage. If you just ingested a one-day smoke-test window, trigger curated/gold
@@ -218,8 +218,10 @@ Manual backfill parameters:
 ## Databricks Git Jobs
 
 Production config uses Databricks Git source execution instead of S3-staged Python files.
-The Jobs API payload includes one top-level `git_source` block and task-level relative
-Python paths such as `src/curated/build_case_header.py`.
+The curated/gold DAG uses a saved Databricks Job so all curated and gold tasks can share
+one jobs cluster. The smoke-test DAG still uses one-time `runs/submit`, which is appropriate
+for a single task. The Databricks job settings include one top-level `git_source` block and
+task-level relative Python paths such as `src/curated/build_case_header.py`.
 
 Required prod values:
 
@@ -229,6 +231,8 @@ S3_BUCKET=pharma-cv-prod
 S3_ENDPOINT_URL=
 DATABRICKS_SUBMIT_ENABLED=true
 DATABRICKS_SECRET_ID=pharma-cv/databricks/prod
+DATABRICKS_SUBMISSION_MODE=saved_job
+DATABRICKS_JOB_NAME=pharma-cv-curated-gold
 DATABRICKS_EXECUTION_SOURCE=git
 DATABRICKS_GIT_URL=https://github.com/logeshvar/openfda-faers-pharma-covigilance-reporting.git
 DATABRICKS_GIT_PROVIDER=gitHub

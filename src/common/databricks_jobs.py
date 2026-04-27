@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 
 DATABRICKS_JOB_CLUSTER_KEY = "pharma_cv_job_cluster"
 SUPPORTED_EXECUTION_SOURCES = {"git", "s3"}
+SUPPORTED_SUBMISSION_MODES = {"runs_submit", "saved_job"}
 
 
 @dataclass(frozen=True)
@@ -22,6 +23,7 @@ class DatabricksSubmitResult:
     run_id: int | None
     run_page_url: str | None
     message: str
+    job_id: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -46,6 +48,34 @@ def build_databricks_submit_run_payload(
         }
 
     return payload
+
+
+def build_databricks_saved_job_settings(
+    config: AppConfig,
+    job_name: str,
+    tasks: list[dict[str, Any]],
+) -> dict[str, Any]:
+    validate_databricks_job_config(config)
+    job_settings: dict[str, Any] = {
+        "name": job_name,
+        "max_concurrent_runs": 1,
+        "job_clusters": [
+            {
+                "job_cluster_key": DATABRICKS_JOB_CLUSTER_KEY,
+                "new_cluster": build_databricks_new_cluster(config),
+            }
+        ],
+        "tasks": tasks,
+    }
+
+    if config.databricks.execution_source == "git":
+        job_settings["git_source"] = {
+            "git_url": config.databricks.git_url,
+            "git_provider": config.databricks.git_provider,
+            "git_branch": config.databricks.git_branch,
+        }
+
+    return job_settings
 
 
 def build_run_submit_tasks(config: AppConfig, tasks: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -76,6 +106,13 @@ def build_run_submit_tasks(config: AppConfig, tasks: list[dict[str, Any]]) -> li
 
 def validate_databricks_job_config(config: AppConfig) -> None:
     execution_source = config.databricks.execution_source
+    submission_mode = config.databricks.submission_mode
+    if submission_mode not in SUPPORTED_SUBMISSION_MODES:
+        raise ValueError(
+            f"Unsupported Databricks submission_mode={submission_mode!r}. "
+            f"Expected one of {sorted(SUPPORTED_SUBMISSION_MODES)}."
+        )
+
     if execution_source not in SUPPORTED_EXECUTION_SOURCES:
         raise ValueError(
             f"Unsupported Databricks execution_source={execution_source!r}. "
@@ -229,6 +266,7 @@ def submit_databricks_run(
             run_id=None,
             run_page_url=None,
             message="Databricks submission disabled or dry-run requested; prepared payload only.",
+            job_id=None,
         )
 
     if not config.databricks.host or not config.databricks.token:
@@ -262,4 +300,118 @@ def submit_databricks_run(
         run_id=response_payload.get("run_id"),
         run_page_url=response_payload.get("run_page_url"),
         message="Databricks run submitted.",
+        job_id=None,
     )
+
+
+def submit_databricks_saved_job(
+    config: AppConfig,
+    job_settings: dict[str, Any],
+    dry_run: bool = False,
+) -> DatabricksSubmitResult:
+    if dry_run or not config.databricks.submit_enabled:
+        logger.info("Databricks saved job submission disabled. Job settings prepared for review: %s", job_settings)
+        return DatabricksSubmitResult(
+            submitted=False,
+            run_id=None,
+            run_page_url=None,
+            message="Databricks saved job submission disabled or dry-run requested; prepared job settings only.",
+            job_id=None,
+        )
+
+    if not config.databricks.host or not config.databricks.token:
+        raise ValueError(
+            "Databricks submission is enabled, but DATABRICKS_HOST or DATABRICKS_TOKEN is missing."
+        )
+
+    job_name = str(job_settings["name"])
+    job_id = find_databricks_job_id_by_name(config=config, job_name=job_name)
+    if job_id is None:
+        job_id = create_databricks_job(config=config, job_settings=job_settings)
+        action = "created"
+    else:
+        reset_databricks_job(config=config, job_id=job_id, job_settings=job_settings)
+        action = "reset"
+
+    run_payload = run_now_databricks_job(config=config, job_id=job_id)
+    return DatabricksSubmitResult(
+        submitted=True,
+        run_id=run_payload.get("run_id"),
+        run_page_url=run_payload.get("run_page_url"),
+        message=f"Databricks saved job {action} and run submitted.",
+        job_id=job_id,
+    )
+
+
+def _databricks_headers(config: AppConfig) -> dict[str, str]:
+    return {"Authorization": f"Bearer {config.databricks.token}"}
+
+
+def _raise_for_databricks_error(response: requests.Response, payload: dict[str, Any] | None = None) -> None:
+    try:
+        response.raise_for_status()
+    except requests.HTTPError as exc:
+        logger.error(
+            "Databricks API call failed status=%s response=%s payload=%s",
+            response.status_code,
+            response.text,
+            payload,
+        )
+        raise RuntimeError(
+            f"Databricks API call failed with HTTP {response.status_code}: {response.text}"
+        ) from exc
+
+
+def find_databricks_job_id_by_name(config: AppConfig, job_name: str) -> int | None:
+    endpoint = config.databricks.host.rstrip("/") + "/api/2.1/jobs/list"
+    page_token: str | None = None
+    while True:
+        params: dict[str, Any] = {"limit": 100, "expand_tasks": "false"}
+        if page_token:
+            params["page_token"] = page_token
+        response = requests.get(endpoint, headers=_databricks_headers(config), params=params, timeout=60)
+        _raise_for_databricks_error(response)
+        payload = response.json()
+        for job in payload.get("jobs", []):
+            if job.get("settings", {}).get("name") == job_name:
+                return int(job["job_id"])
+        page_token = payload.get("next_page_token")
+        if not page_token:
+            return None
+
+
+def create_databricks_job(config: AppConfig, job_settings: dict[str, Any]) -> int:
+    endpoint = config.databricks.host.rstrip("/") + "/api/2.1/jobs/create"
+    response = requests.post(
+        endpoint,
+        headers=_databricks_headers(config),
+        json=job_settings,
+        timeout=60,
+    )
+    _raise_for_databricks_error(response, payload=job_settings)
+    return int(response.json()["job_id"])
+
+
+def reset_databricks_job(config: AppConfig, job_id: int, job_settings: dict[str, Any]) -> None:
+    endpoint = config.databricks.host.rstrip("/") + "/api/2.1/jobs/reset"
+    payload = {"job_id": job_id, "new_settings": job_settings}
+    response = requests.post(
+        endpoint,
+        headers=_databricks_headers(config),
+        json=payload,
+        timeout=60,
+    )
+    _raise_for_databricks_error(response, payload=payload)
+
+
+def run_now_databricks_job(config: AppConfig, job_id: int) -> dict[str, Any]:
+    endpoint = config.databricks.host.rstrip("/") + "/api/2.1/jobs/run-now"
+    payload = {"job_id": job_id}
+    response = requests.post(
+        endpoint,
+        headers=_databricks_headers(config),
+        json=payload,
+        timeout=60,
+    )
+    _raise_for_databricks_error(response, payload=payload)
+    return response.json()
