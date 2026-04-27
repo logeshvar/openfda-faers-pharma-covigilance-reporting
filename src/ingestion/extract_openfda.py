@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import asdict, dataclass, field
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -58,6 +58,15 @@ def parse_window_date(value: str | date) -> date:
     return datetime.strptime(value, DATE_FORMAT).date()
 
 
+def iter_daily_windows(window_start: date, window_end: date) -> list[date]:
+    days: list[date] = []
+    current = window_start
+    while current <= window_end:
+        days.append(current)
+        current += timedelta(days=1)
+    return days
+
+
 def extract_openfda_window(
     config: AppConfig,
     window_start: str | date,
@@ -89,18 +98,34 @@ def extract_openfda_window(
         sleep_seconds_between_requests=config.openfda.sleep_seconds_between_requests,
     )
 
-    fetch_result = client.fetch_reports_by_window(
-        window_start=parsed_window_start,
-        window_end=parsed_window_end,
-        page_size=page_size,
-        max_pages=max_pages,
-    )
+    records: list[dict[str, Any]] = []
+    total_available = 0
+    pages_retrieved = 0
+    statuses: list[str] = []
+
+    for day in iter_daily_windows(parsed_window_start, parsed_window_end):
+        fetch_result = client.fetch_reports_by_window(
+            window_start=day,
+            window_end=day,
+            page_size=page_size,
+            max_pages=max_pages,
+        )
+        records.extend(fetch_result.records)
+        total_available += fetch_result.total_available or 0
+        pages_retrieved += fetch_result.pages_retrieved
+        statuses.append(fetch_result.api_status)
+
+    api_status = "SUCCESS" if records else "NO_DATA"
 
     logger.info(
-        "Completed openFDA extraction ingest_batch_id=%s api_status=%s records_fetched=%s",
+        "Completed openFDA extraction ingest_batch_id=%s api_status=%s records_fetched=%s "
+        "total_available=%s pages_retrieved=%s daily_windows=%s",
         resolved_ingest_batch_id,
-        fetch_result.api_status,
-        len(fetch_result.records),
+        api_status,
+        len(records),
+        total_available,
+        pages_retrieved,
+        len(statuses),
     )
 
     return ExtractionResult(
@@ -110,9 +135,9 @@ def extract_openfda_window(
         query_window_end=parsed_window_end.strftime(DATE_FORMAT),
         source_file_name=source_file_name,
         load_timestamp=load_timestamp,
-        api_status=fetch_result.api_status,
-        records_fetched=len(fetch_result.records),
-        records=fetch_result.records,
+        api_status=api_status,
+        records_fetched=len(records),
+        records=records,
     )
 
 

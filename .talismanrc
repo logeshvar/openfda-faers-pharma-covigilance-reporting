@@ -23,4 +23,6 @@ fileignoreconfig:
   checksum: e3113e03411abb64c2b4e81e6f1ba6a9dca9117263942aca1a2c5b30c594489e
 - filename: src/curated/case_header_runtime.py
   checksum: b9ceaa7aebf272e183f502d72d192adfab7a0cbad154d4f59aee890f3470675a
+- filename: tests/unit/test_extract_openfda.py
+  checksum: 2100a24b1850693c26f8bf846e369709715be656d28bc438136f93034b2ecdaf
 version: ""

@@ -148,8 +148,10 @@ docker compose exec airflow-scheduler airflow dags list | grep openfda_refresh_m
 
 ### 4. Trigger a manual backfill run
 
-For smoke tests, prefer a one-day window. Larger month or quarter windows can exceed
-the openFDA API pagination cap and should be split into smaller backfills.
+For smoke tests, prefer a one-day window. The extractor handles larger manual windows
+by fetching openFDA one day at a time and combining the results into a single raw batch.
+If `max_pages` is set lower than the page count needed for a day, the client logs a
+warning and auto-extends to avoid landing an incomplete batch.
 
 ```bash
 docker compose exec airflow-scheduler airflow dags trigger openfda_ingest_raw \
@@ -306,18 +308,19 @@ For target-style execution, use `conf/prod.yaml` as the shape of the AWS config:
 
 ## Current Assumptions
 
-- Monthly runs use the Airflow data interval and ingest the full prior interval.
+- Scheduled runs ingest a lagged one-day window by default because FAERS/openFDA updates quarterly and can lag by 3+ months.
 - The extraction window is based on openFDA `receivedate`.
 - The local S3 bucket is created automatically during Docker startup.
 - Raw DQ failures still write an audit record before the DAG fails.
-- If openFDA pagination would truncate the batch, the client raises an error instead of silently landing partial data.
+- Manual multi-day backfills are decomposed into daily openFDA API queries and landed as one raw batch.
+- If a configured `max_pages` value is too low for a day, the client auto-extends after reading openFDA's reported total.
 
 ## Troubleshooting
 
-If the extractor fails with a message like `openFDA extraction stopped before all records were retrieved`, either:
-- increase `max_pages` for that backfill run
-- increase `page_size` up to the openFDA limit of `100`
-- narrow the requested date window
+If the extractor fails before landing raw data, check the `extract_and_stage` task log for the
+openFDA HTTP status and response body. The client retries transient `429`, `500`, `502`, `503`,
+and `504` responses, treats openFDA `404 no matches found` as a successful `NO_DATA` batch, and
+auto-extends low `max_pages` values to avoid incomplete raw batches.
 
 If `docker compose up` fails with a `Temporary failure in name resolution` error while trying to install packages like `PyYAML`, you are likely running an older compose definition that still installs Python packages during container startup. Pull the latest `docker-compose.yml`, run `docker compose down`, and start the stack again. The current repo version does not install packages from PyPI during `up`.
 

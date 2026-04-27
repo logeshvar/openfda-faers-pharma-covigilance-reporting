@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import time
 from dataclasses import dataclass
 from datetime import date
@@ -76,7 +77,19 @@ class OpenFDAClient:
                 logger.info("No openFDA records found for search expression %s", search_expression)
                 return None
 
-        response.raise_for_status()
+        try:
+            response.raise_for_status()
+        except requests.HTTPError:
+            logger.error(
+                "openFDA request failed status=%s search=%s skip=%s limit=%s response=%s",
+                response.status_code,
+                search_expression,
+                skip,
+                limit,
+                response.text[:1000],
+            )
+            raise
+
         return response.json()
 
     def fetch_reports_by_window(
@@ -87,7 +100,7 @@ class OpenFDAClient:
         max_pages: int | None = None,
     ) -> OpenFDAFetchResult:
         limit = min(page_size or self.page_size, 100)
-        page_cap = max_pages or self.max_pages_per_run
+        page_cap = max(max_pages or self.max_pages_per_run, 1)
         search_expression = self._build_search_expression(window_start, window_end)
 
         records: list[dict[str, Any]] = []
@@ -102,7 +115,8 @@ class OpenFDAClient:
             page_cap,
         )
 
-        for page_index in range(page_cap):
+        page_index = 0
+        while page_index < page_cap:
             skip = page_index * limit
             payload = self._request_page(search_expression, skip=skip, limit=limit)
 
@@ -123,6 +137,18 @@ class OpenFDAClient:
             if not page_records:
                 break
 
+            required_pages = max(math.ceil(total_available / limit), 1)
+            if required_pages > page_cap:
+                logger.warning(
+                    "Configured max_pages=%s is lower than required_pages=%s for %s to %s; "
+                    "auto-extending this extraction to avoid an incomplete raw batch.",
+                    page_cap,
+                    required_pages,
+                    window_start,
+                    window_end,
+                )
+                page_cap = required_pages
+
             records.extend(page_records)
             pages_retrieved += 1
 
@@ -139,6 +165,8 @@ class OpenFDAClient:
 
             if self.sleep_seconds_between_requests > 0:
                 time.sleep(self.sleep_seconds_between_requests)
+
+            page_index += 1
 
         if total_available is not None and len(records) < total_available:
             raise RuntimeError(

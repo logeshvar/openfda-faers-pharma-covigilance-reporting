@@ -32,7 +32,7 @@ flowchart LR
 The implemented ingestion flow is fully runnable locally today:
 - Airflow resolves a lagged daily scheduled window or a manual batch window.
 - Scheduled raw ingestion runs behind a configurable source lag because FAERS/openFDA is updated quarterly and may lag by 3+ months.
-- The openFDA client paginates the API by `receivedate`.
+- The openFDA client paginates by `receivedate`, auto-extends low page caps when openFDA reports more records than expected, and decomposes manual multi-day windows into daily API queries.
 - Raw records are wrapped in bronze-style envelopes and written as immutable NDJSON.
 - A batch audit document is written even when raw DQ fails.
 

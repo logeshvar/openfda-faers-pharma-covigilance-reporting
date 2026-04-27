@@ -50,7 +50,10 @@ def _default_window_from_context(context: dict[str, Any]) -> tuple[str, str]:
     runs therefore ingest a small stable window behind a configurable lag instead
     of querying the newest month or a full quarter.
 
-    Manual backfill overrides can be supplied with `dag_run.conf`:
+    Manual backfill overrides can be supplied with `dag_run.conf`. Multi-day
+    windows are fetched from openFDA as daily chunks and landed as one raw batch.
+    If `max_pages` is lower than the actual page count needed for a day, the
+    extractor auto-extends to avoid an incomplete landing.
 
     ```json
     {
