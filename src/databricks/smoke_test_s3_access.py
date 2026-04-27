@@ -35,7 +35,6 @@ def main(argv: list[str] | None = None) -> int:
     print(f"Writing marker file to {marker_path}")
     resolved_dbutils.fs.put(marker_path, f"Databricks smoke test succeeded at {timestamp}\n", overwrite=True)
     print("Databricks smoke test completed successfully")
-    spark.stop()
     return 0
 
 

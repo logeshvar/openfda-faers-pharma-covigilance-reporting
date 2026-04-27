@@ -73,13 +73,10 @@ def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s - %(message)s")
     log_common_databricks_args(args)
     spark = SparkSession.builder.appName("build_gold_case_seriousness_trends").getOrCreate()
-    try:
-        logger.info(
-            "Job complete: %s",
-            run_gold_case_seriousness_trends_job(spark, args.latest_case_path, args.output_path).to_dict(),
-        )
-    finally:
-        spark.stop()
+    logger.info(
+        "Job complete: %s",
+        run_gold_case_seriousness_trends_job(spark, args.latest_case_path, args.output_path).to_dict(),
+    )
     return 0
 
 

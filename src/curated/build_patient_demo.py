@@ -283,15 +283,12 @@ def main(argv: list[str] | None = None) -> int:
     log_common_databricks_args(args)
 
     spark = SparkSession.builder.appName("build_patient_demo").getOrCreate()
-    try:
-        result = run_patient_demo_job(
-            spark=spark,
-            raw_input_path=args.raw_input_path,
-            output_path=args.output_path,
-        )
-        logger.info("Job complete: %s", result.to_dict())
-    finally:
-        spark.stop()
+    result = run_patient_demo_job(
+        spark=spark,
+        raw_input_path=args.raw_input_path,
+        output_path=args.output_path,
+    )
+    logger.info("Job complete: %s", result.to_dict())
 
     return 0
 
