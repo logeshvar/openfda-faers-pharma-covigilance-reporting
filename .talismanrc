@@ -12,7 +12,7 @@ fileignoreconfig:
 - filename: README.md
   checksum: bcf18df4afb33149db53f1d723432a120ffc3b9076a601d7ccddfd491e51e817
 - filename: docs/architecture.md
-  checksum: 858fbea43cdb0c0142a12c87287ae4698d2e315300c8b3f13c3745e6b97e51c7
+  checksum: b7858183ccacaae41ed90763d420e8fa955b4e04f7a31512bed343258927899c
 - filename: src/common/databricks_jobs.py
   checksum: b085adf607502755e5e3353b1c774ed29aef05082554c9eae1cb3ec8aedded7e
 - filename: src/common/config.py
@@ -20,9 +20,9 @@ fileignoreconfig:
 - filename: tests/unit/test_databricks_jobs.py
   checksum: 523836c887568474e9938ec210ca1cef396862f342d3c6e645492c44ad862f0e
 - filename: tests/unit/test_case_header_runtime.py
-  checksum: e3113e03411abb64c2b4e81e6f1ba6a9dca9117263942aca1a2c5b30c594489e
+  checksum: f59bbfd5600a81a70a3af4b033c10e1dd89337d507e48925037d44c4898d7361
 - filename: src/curated/case_header_runtime.py
-  checksum: b9ceaa7aebf272e183f502d72d192adfab7a0cbad154d4f59aee890f3470675a
+  checksum: c417ddbabed34993015f6392605d5a794e838f6e1354e1943ea4aa30c705c5e7
 - filename: tests/unit/test_extract_openfda.py
   checksum: 2100a24b1850693c26f8bf846e369709715be656d28bc438136f93034b2ecdaf
 version: ""

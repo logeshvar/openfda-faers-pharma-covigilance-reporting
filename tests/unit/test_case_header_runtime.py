@@ -270,11 +270,22 @@ def test_build_databricks_tasks_for_gold_builds_dependency_aware_tasks() -> None
         "build_gold_reaction_demographic_trends",
         "build_gold_manufacturer_class_serious_trends",
     ]
-    assert tasks[0]["depends_on"] == [{"task_key": "build_curated_case_reaction"}]
+    assert tasks[0]["depends_on"] == [
+        {"task_key": "build_curated_case_header"},
+        {"task_key": "build_curated_primary_source"},
+        {"task_key": "build_curated_patient_demo"},
+        {"task_key": "build_curated_case_drug"},
+        {"task_key": "build_curated_case_drug_openfda"},
+        {"task_key": "build_curated_case_reaction"},
+    ]
+    assert tasks[1]["depends_on"] == [{"task_key": "build_gold_latest_case_helper"}]
+    assert tasks[2]["depends_on"] == [{"task_key": "build_gold_latest_case_helper"}]
+    assert tasks[3]["depends_on"] == [{"task_key": "build_gold_latest_case_helper"}]
+    assert tasks[4]["depends_on"] == [{"task_key": "build_gold_latest_case_helper"}]
     assert "--case-header-path" in tasks[0]["spark_python_task"]["parameters"]
 
 
-def test_git_execution_uses_repo_relative_python_files_and_chained_dependencies() -> None:
+def test_git_execution_uses_repo_relative_python_files_and_parallel_curated_tasks() -> None:
     config = _build_test_config()
     config = replace(
         config,
@@ -312,4 +323,5 @@ def test_git_execution_uses_repo_relative_python_files_and_chained_dependencies(
 
     assert tasks[0]["spark_python_task"]["python_file"] == "src/curated/build_case_header.py"
     assert tasks[1]["spark_python_task"]["python_file"] == "src/curated/build_primary_source.py"
-    assert tasks[1]["depends_on"] == [{"task_key": "build_curated_case_header"}]
+    assert "depends_on" not in tasks[0]
+    assert "depends_on" not in tasks[1]

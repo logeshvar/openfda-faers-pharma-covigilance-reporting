@@ -78,6 +78,7 @@ Implemented:
 - `src/curated/build_patient_demo.py` Spark transformation for `curated_patient_demo`
 - Python normalization tests for qualification labels, sex labels, age unit labels, age conversion, age bands, and latest-row dedupe
 - Databricks task generation for the three curated Spark scripts
+- curated Databricks tasks are independent and can run in parallel from the same raw batch
 
 ## Milestone 4 Progress
 
@@ -97,6 +98,7 @@ Implemented:
 - Glue/Athena registration helper and `openfda_refresh_metadata` DAG
 - Athena validation SQL and basic reporting views
 - gold Delta writes use `replaceWhere` for the affected `report_year`/`report_month` partitions instead of overwriting full history
+- final gold trend tasks fan out in parallel after the latest-case helper is built
 
 Deferred to later milestones:
 - Bedrock summaries

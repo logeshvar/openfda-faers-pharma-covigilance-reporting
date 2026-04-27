@@ -8,10 +8,21 @@ from typing import TYPE_CHECKING, Any, Iterable, Mapping
 import sys
 from pathlib import Path
 
-for _parent in Path(__file__).resolve().parents:
-    if (_parent / "src").is_dir() and (_parent / "conf").is_dir():
-        sys.path.insert(0, str(_parent))
-        break
+_repo_anchors = []
+if "__file__" in globals():
+    _repo_anchors.append(Path(__file__).resolve())
+_repo_anchors.append(Path.cwd().resolve())
+
+for _anchor in _repo_anchors:
+    _start = _anchor if _anchor.is_dir() else _anchor.parent
+    for _parent in (_start, *_start.parents):
+        if (_parent / "src").is_dir() and (_parent / "conf").is_dir():
+            if str(_parent) not in sys.path:
+                sys.path.insert(0, str(_parent))
+            break
+    else:
+        continue
+    break
 
 from src.common.databricks_runtime import add_common_databricks_args, log_common_databricks_args
 from src.common.normalization import as_list as _as_list

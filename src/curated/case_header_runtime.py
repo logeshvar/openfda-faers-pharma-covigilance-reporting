@@ -333,7 +333,6 @@ def build_databricks_tasks_for_curated_manifests(
     run_id: str,
 ) -> list[dict[str, Any]]:
     tasks: list[dict[str, Any]] = []
-    previous_task_key: str | None = None
 
     for manifest in manifests:
         table_name = manifest["table_name"] if isinstance(manifest, dict) else manifest.table_name
@@ -373,10 +372,8 @@ def build_databricks_tasks_for_curated_manifests(
                 task_key=task_key,
                 python_file=python_file_value,
                 parameters=parameters,
-                depends_on=[previous_task_key] if previous_task_key else None,
             )
         )
-        previous_task_key = task_key
 
     return tasks
 
@@ -410,13 +407,15 @@ def build_databricks_tasks_for_gold(
         window_end=window_end,
         batch_id=batch_id,
     )
+    curated_layer_task_keys = [f"build_{table_name}" for table_name in CURATED_TABLE_BUILD_ORDER]
+    latest_case_task_key = f"build_{GOLD_LATEST_CASE_HELPER_TABLE}"
 
     return [
         build_spark_python_task(
             config=config,
-            task_key=f"build_{GOLD_LATEST_CASE_HELPER_TABLE}",
+            task_key=latest_case_task_key,
             python_file="gold/build_latest_case_helper.py",
-            depends_on=[f"build_{CURATED_CASE_REACTION_TABLE}"],
+            depends_on=curated_layer_task_keys,
             parameters=common_parameters
             + ["--case-header-path", case_header_path, "--output-path", latest_case_path],
         ),
@@ -424,7 +423,7 @@ def build_databricks_tasks_for_gold(
             config=config,
             task_key=f"build_{GOLD_CASE_SERIOUSNESS_TRENDS_TABLE}",
             python_file="gold/build_gold_case_seriousness_trends.py",
-            depends_on=[f"build_{GOLD_LATEST_CASE_HELPER_TABLE}"],
+            depends_on=[latest_case_task_key],
             parameters=common_parameters
             + [
                 "--latest-case-path",
@@ -437,7 +436,7 @@ def build_databricks_tasks_for_gold(
             config=config,
             task_key=f"build_{GOLD_DRUG_REACTION_TRENDS_TABLE}",
             python_file="gold/build_gold_drug_reaction_trends.py",
-            depends_on=[f"build_{GOLD_CASE_SERIOUSNESS_TRENDS_TABLE}"],
+            depends_on=[latest_case_task_key],
             parameters=common_parameters
             + [
                 "--latest-case-path",
@@ -454,7 +453,7 @@ def build_databricks_tasks_for_gold(
             config=config,
             task_key=f"build_{GOLD_REACTION_DEMOGRAPHIC_TRENDS_TABLE}",
             python_file="gold/build_gold_reaction_demographic_trends.py",
-            depends_on=[f"build_{GOLD_DRUG_REACTION_TRENDS_TABLE}"],
+            depends_on=[latest_case_task_key],
             parameters=common_parameters
             + [
                 "--latest-case-path",
@@ -473,7 +472,7 @@ def build_databricks_tasks_for_gold(
             config=config,
             task_key=f"build_{GOLD_MANUFACTURER_CLASS_SERIOUS_TRENDS_TABLE}",
             python_file="gold/build_gold_manufacturer_class_serious_trends.py",
-            depends_on=[f"build_{GOLD_REACTION_DEMOGRAPHIC_TRENDS_TABLE}"],
+            depends_on=[latest_case_task_key],
             parameters=common_parameters
             + [
                 "--latest-case-path",
