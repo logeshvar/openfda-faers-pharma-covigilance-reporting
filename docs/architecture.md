@@ -51,6 +51,8 @@ The current gold scope includes:
 - `gold_reaction_demographic_trends`
 - `gold_manufacturer_class_serious_trends`
 
+Curated Delta tables merge incoming raw-batch results by their business keys, preserving all report versions without replacing unrelated history. Gold tables read the latest curated state and overwrite only the affected `report_year`/`report_month` partitions with Delta `replaceWhere`, which keeps one-day reruns from replacing broader gold history.
+
 The Airflow curated/gold DAG now prepares Git-backed Databricks saved-job settings with a shared job cluster. In dev, submission is disabled by default so the job settings can be reviewed without needing live Databricks credentials. In the AWS-oriented config, submission is enabled and reads Databricks `host` and `token` from AWS Secrets Manager, creates or resets the saved job, and triggers `run-now`. The shared job cluster uses the configured AWS instance profile to read and write S3 raw, curated, gold, and ops paths.
 
 After Databricks finishes, `openfda_refresh_metadata` can register the Delta table locations for Glue/Athena.
@@ -101,7 +103,7 @@ The code path is designed so the migration is mostly configuration and packaging
 - replace MinIO bucket settings with a real S3 bucket
 - remove `S3_ENDPOINT_URL`
 - switch from static local credentials to IAM roles
-- package the curated Spark jobs for Databricks execution
-- upload the `src/curated/*.py` Spark scripts to the configured `databricks.python_file_base_uri`
+- point Databricks Jobs at the Git repo and branch configured under `databricks.git_url` and `databricks.git_branch`
+- attach the configured instance profile to the shared Databricks job cluster
 - register curated and gold Delta tables in Glue
 - query them through Athena

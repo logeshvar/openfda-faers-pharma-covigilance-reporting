@@ -14,6 +14,7 @@ for _parent in Path(__file__).resolve().parents:
         break
 
 from src.common.databricks_runtime import add_common_databricks_args, log_common_databricks_args
+from src.common.delta_write import overwrite_report_month_partitions
 
 if TYPE_CHECKING:
     from pyspark.sql import DataFrame, SparkSession
@@ -49,12 +50,21 @@ def build_gold_case_seriousness_trends_df(latest_case_df: "DataFrame") -> "DataF
 
 
 def run_gold_case_seriousness_trends_job(
-    spark: "SparkSession", latest_case_path: str, output_path: str
+    spark: "SparkSession",
+    latest_case_path: str,
+    output_path: str,
+    window_start: str,
+    window_end: str,
 ) -> GoldJobResult:
     latest_case_df = spark.read.format("delta").load(latest_case_path)
     gold_df = build_gold_case_seriousness_trends_df(latest_case_df)
     records_written = gold_df.count()
-    gold_df.write.format("delta").mode("overwrite").partitionBy("report_year", "report_month").save(output_path)
+    overwrite_report_month_partitions(
+        gold_df,
+        output_path=output_path,
+        window_start=window_start,
+        window_end=window_end,
+    )
     return GoldJobResult(output_path=output_path, records_written=records_written)
 
 
@@ -75,7 +85,13 @@ def main(argv: list[str] | None = None) -> int:
     spark = SparkSession.builder.appName("build_gold_case_seriousness_trends").getOrCreate()
     logger.info(
         "Job complete: %s",
-        run_gold_case_seriousness_trends_job(spark, args.latest_case_path, args.output_path).to_dict(),
+        run_gold_case_seriousness_trends_job(
+            spark,
+            args.latest_case_path,
+            args.output_path,
+            args.window_start,
+            args.window_end,
+        ).to_dict(),
     )
     return 0
 

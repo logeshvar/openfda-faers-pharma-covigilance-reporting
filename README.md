@@ -59,6 +59,7 @@ Implemented:
 - ingest audit record writer
 - raw DQ checks
 - first TaskFlow DAG: `openfda_ingest_raw`
+- immutable raw batch layout where repeat runs create new batch objects instead of overwriting earlier landings
 
 ## Milestone 2 Progress
 
@@ -95,6 +96,7 @@ Implemented:
 - gold manufacturer/class seriousness trend table
 - Glue/Athena registration helper and `openfda_refresh_metadata` DAG
 - Athena validation SQL and basic reporting views
+- gold Delta writes use `replaceWhere` for the affected `report_year`/`report_month` partitions instead of overwriting full history
 
 Deferred to later milestones:
 - Bedrock summaries
@@ -308,7 +310,8 @@ For target-style execution, use `conf/prod.yaml` as the shape of the AWS config:
 - `S3_BUCKET` should point to the real project bucket.
 - Airflow should use an IAM role with S3 read/write access instead of static local keys.
 - `DATABRICKS_HOST` and `DATABRICKS_TOKEN` should come from Secrets Manager, an Airflow connection, or the managed runtime environment.
-- `DATABRICKS_PYTHON_FILE_BASE_URI` should point to the S3 location where the curated Spark scripts are staged.
+- Databricks execution uses Git source by default, so `DATABRICKS_GIT_URL`, `DATABRICKS_GIT_PROVIDER`, and `DATABRICKS_GIT_BRANCH` identify the repo revision to run.
+- `DATABRICKS_PYTHON_FILE_BASE_URI` is only needed for the legacy S3 script-source mode.
 
 ## Current Assumptions
 
@@ -318,6 +321,8 @@ For target-style execution, use `conf/prod.yaml` as the shape of the AWS config:
 - Raw DQ failures still write an audit record before the DAG fails.
 - Manual multi-day backfills are decomposed into daily openFDA API queries and landed as one raw batch.
 - If a configured `max_pages` value is too low for a day, the client auto-extends after reading openFDA's reported total.
+- Curated tables merge by their report-version business keys once a Delta table exists.
+- Gold tables rebuild only the affected `report_year`/`report_month` partitions for the run window.
 
 ## Troubleshooting
 

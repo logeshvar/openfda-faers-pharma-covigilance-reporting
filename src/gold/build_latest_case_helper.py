@@ -14,6 +14,7 @@ for _parent in Path(__file__).resolve().parents:
         break
 
 from src.common.databricks_runtime import add_common_databricks_args, log_common_databricks_args
+from src.common.delta_write import overwrite_report_month_partitions
 
 if TYPE_CHECKING:
     from pyspark.sql import DataFrame, SparkSession
@@ -49,20 +50,22 @@ def build_latest_case_df(case_header_df: "DataFrame") -> "DataFrame":
     )
 
 
-def write_delta(df: "DataFrame", output_path: str, partition_columns: list[str] | None = None) -> None:
-    writer = df.write.format("delta").mode("overwrite")
-    if partition_columns:
-        writer = writer.partitionBy(*partition_columns)
-    writer.save(output_path)
-
-
 def run_latest_case_helper_job(
-    spark: "SparkSession", case_header_path: str, output_path: str
+    spark: "SparkSession",
+    case_header_path: str,
+    output_path: str,
+    window_start: str,
+    window_end: str,
 ) -> GoldJobResult:
     case_header_df = spark.read.format("delta").load(case_header_path)
     latest_df = build_latest_case_df(case_header_df)
     records_written = latest_df.count()
-    write_delta(latest_df, output_path=output_path, partition_columns=["report_year", "report_month"])
+    overwrite_report_month_partitions(
+        latest_df,
+        output_path=output_path,
+        window_start=window_start,
+        window_end=window_end,
+    )
     return GoldJobResult(output_path=output_path, records_written=records_written)
 
 
@@ -83,7 +86,13 @@ def main(argv: list[str] | None = None) -> int:
     spark = SparkSession.builder.appName("build_latest_case_helper").getOrCreate()
     logger.info(
         "Job complete: %s",
-        run_latest_case_helper_job(spark, args.case_header_path, args.output_path).to_dict(),
+        run_latest_case_helper_job(
+            spark,
+            args.case_header_path,
+            args.output_path,
+            args.window_start,
+            args.window_end,
+        ).to_dict(),
     )
     return 0
 

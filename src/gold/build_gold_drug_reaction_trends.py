@@ -14,6 +14,7 @@ for _parent in Path(__file__).resolve().parents:
         break
 
 from src.common.databricks_runtime import add_common_databricks_args, log_common_databricks_args
+from src.common.delta_write import overwrite_report_month_partitions
 
 if TYPE_CHECKING:
     from pyspark.sql import SparkSession
@@ -38,6 +39,8 @@ def run_gold_drug_reaction_trends_job(
     case_drug_path: str,
     case_reaction_path: str,
     output_path: str,
+    window_start: str,
+    window_end: str,
 ) -> GoldJobResult:
     from pyspark.sql import functions as F
 
@@ -61,7 +64,12 @@ def run_gold_drug_reaction_trends_job(
         F.sum("serious_case_ind").alias("serious_case_count"),
     )
     records_written = gold_df.count()
-    gold_df.write.format("delta").mode("overwrite").partitionBy("report_year", "report_month").save(output_path)
+    overwrite_report_month_partitions(
+        gold_df,
+        output_path=output_path,
+        window_start=window_start,
+        window_end=window_end,
+    )
     return GoldJobResult(output_path=output_path, records_written=records_written)
 
 
@@ -85,7 +93,13 @@ def main(argv: list[str] | None = None) -> int:
     logger.info(
         "Job complete: %s",
         run_gold_drug_reaction_trends_job(
-            spark, args.latest_case_path, args.case_drug_path, args.case_reaction_path, args.output_path
+            spark,
+            args.latest_case_path,
+            args.case_drug_path,
+            args.case_reaction_path,
+            args.output_path,
+            args.window_start,
+            args.window_end,
         ).to_dict(),
     )
     return 0
