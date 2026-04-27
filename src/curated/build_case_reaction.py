@@ -5,6 +5,15 @@ import logging
 from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING, Any, Iterable, Mapping
 
+import sys
+from pathlib import Path
+
+for _parent in Path(__file__).resolve().parents:
+    if (_parent / "src").is_dir() and (_parent / "conf").is_dir():
+        sys.path.insert(0, str(_parent))
+        break
+
+from src.common.databricks_runtime import add_common_databricks_args, log_common_databricks_args
 from src.common.normalization import as_list as _as_list
 from src.common.normalization import as_text as _as_text
 
@@ -171,6 +180,7 @@ def run_case_reaction_job(
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build curated_case_reaction from raw bronze envelopes.")
+    add_common_databricks_args(parser)
     parser.add_argument("--raw-input-path", required=True)
     parser.add_argument("--output-path", required=True)
     return parser.parse_args(argv)
@@ -181,6 +191,7 @@ def main(argv: list[str] | None = None) -> int:
 
     args = parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s - %(message)s")
+    log_common_databricks_args(args)
     spark = SparkSession.builder.appName("build_case_reaction").getOrCreate()
     try:
         logger.info(

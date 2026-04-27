@@ -13,7 +13,11 @@ from src.common.config import (
     ProjectSettings,
     S3Settings,
 )
-from src.common.databricks_jobs import build_databricks_submit_run_payload, submit_databricks_run
+from src.common.databricks_jobs import (
+    build_databricks_smoke_test_payload,
+    build_databricks_submit_run_payload,
+    submit_databricks_run,
+)
 
 
 def _build_test_config(submit_enabled: bool = False) -> AppConfig:
@@ -47,6 +51,12 @@ def _build_test_config(submit_enabled: bool = False) -> AppConfig:
             spark_version="14.3.x-scala2.12",
             node_type_id="i3.xlarge",
             num_workers=1,
+            execution_source="git",
+            git_url="https://github.com/logeshvar/openfda-faers-pharma-covigilance-reporting.git",
+            git_provider="gitHub",
+            git_branch="main",
+            python_file_base_path="src",
+            instance_profile_arn="arn:aws:iam::123456789012:instance-profile/test",
         ),
         metadata=MetadataSettings(
             glue_database_name="pharma_cv_test",
@@ -65,7 +75,7 @@ def _build_test_config(submit_enabled: bool = False) -> AppConfig:
     )
 
 
-def test_build_databricks_submit_run_payload_wraps_tasks_in_job_cluster() -> None:
+def test_build_databricks_submit_run_payload_materializes_task_clusters() -> None:
     config = _build_test_config()
 
     payload = build_databricks_submit_run_payload(
@@ -75,9 +85,18 @@ def test_build_databricks_submit_run_payload_wraps_tasks_in_job_cluster() -> Non
     )
 
     assert payload["run_name"] == "pharma-cv_curated_2026-03-01_2026-03-31"
-    assert payload["job_clusters"][0]["job_cluster_key"] == "curated_job_cluster"
-    assert payload["job_clusters"][0]["new_cluster"]["spark_version"] == "14.3.x-scala2.12"
-    assert payload["tasks"] == [{"task_key": "build_curated_case_header"}]
+    assert "job_clusters" not in payload
+    assert payload["tasks"][0]["new_cluster"]["spark_version"] == "14.3.x-scala2.12"
+    assert (
+        payload["tasks"][0]["new_cluster"]["aws_attributes"]["instance_profile_arn"]
+        == "arn:aws:iam::123456789012:instance-profile/test"
+    )
+    assert payload["git_source"] == {
+        "git_url": "https://github.com/logeshvar/openfda-faers-pharma-covigilance-reporting.git",
+        "git_provider": "gitHub",
+        "git_branch": "main",
+    }
+    assert payload["tasks"][0]["task_key"] == "build_curated_case_header"
 
 
 def test_submit_databricks_run_returns_dry_run_result_when_submission_disabled() -> None:
@@ -87,4 +106,16 @@ def test_submit_databricks_run_returns_dry_run_result_when_submission_disabled()
 
     assert result.submitted is False
     assert result.run_id is None
-    assert result.message == "Databricks submission disabled; prepared payload only."
+    assert result.message == "Databricks submission disabled or dry-run requested; prepared payload only."
+
+
+def test_build_databricks_smoke_test_payload_uses_git_source() -> None:
+    config = _build_test_config()
+
+    payload = build_databricks_smoke_test_payload(config=config, run_name="smoke")
+
+    assert payload["git_source"]["git_provider"] == "gitHub"
+    assert payload["tasks"][0]["spark_python_task"]["python_file"] == "src/databricks/smoke_test_s3_access.py"
+    assert payload["tasks"][0]["spark_python_task"]["source"] == "GIT"
+    assert "job_cluster_key" not in payload["tasks"][0]
+    assert payload["tasks"][0]["new_cluster"]["spark_version"] == "14.3.x-scala2.12"

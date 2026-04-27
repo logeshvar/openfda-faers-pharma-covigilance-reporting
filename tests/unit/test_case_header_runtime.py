@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import date
 from pathlib import Path
 
@@ -201,20 +202,45 @@ def test_build_databricks_tasks_for_curated_manifests_builds_spark_python_tasks(
         {
             "table_name": "curated_primary_source",
             "python_file": "curated/build_primary_source.py",
+            "query_window_start": "2026-03-01",
+            "query_window_end": "2026-03-31",
             "raw_input_s3_uri": "s3://pharma-cv-test/raw/file.ndjson",
+            "selected_ingest_batch_id": "openfda_drug_event_20260301_20260331_20260421T035810Z",
             "curated_output_s3_uri": "s3://pharma-cv-test/curated/curated_primary_source",
         }
     ]
 
-    tasks = build_databricks_tasks_for_curated_manifests(config=config, manifests=manifests)
+    tasks = build_databricks_tasks_for_curated_manifests(
+        config=config,
+        manifests=manifests,
+        run_id="manual__test",
+    )
 
     assert tasks == [
         {
             "task_key": "build_curated_primary_source",
-            "job_cluster_key": "curated_job_cluster",
+            "job_cluster_key": "pharma_cv_job_cluster",
             "spark_python_task": {
                 "python_file": "s3://pharma-cv-test/jobs/src/curated/build_primary_source.py",
                 "parameters": [
+                    "--env",
+                    "test",
+                    "--run-id",
+                    "manual__test",
+                    "--raw-base-path",
+                    "s3://pharma-cv-test/raw/openfda/drug_event",
+                    "--curated-base-path",
+                    "s3://pharma-cv-test/curated",
+                    "--gold-base-path",
+                    "s3://pharma-cv-test/gold",
+                    "--ops-base-path",
+                    "s3://pharma-cv-test/ops",
+                    "--window-start",
+                    "2026-03-01",
+                    "--window-end",
+                    "2026-03-31",
+                    "--batch-id",
+                    "openfda_drug_event_20260301_20260331_20260421T035810Z",
                     "--raw-input-path",
                     "s3://pharma-cv-test/raw/file.ndjson",
                     "--output-path",
@@ -228,7 +254,13 @@ def test_build_databricks_tasks_for_curated_manifests_builds_spark_python_tasks(
 def test_build_databricks_tasks_for_gold_builds_dependency_aware_tasks() -> None:
     config = _build_test_config()
 
-    tasks = build_databricks_tasks_for_gold(config=config)
+    tasks = build_databricks_tasks_for_gold(
+        config=config,
+        run_id="manual__test",
+        window_start="2026-03-01",
+        window_end="2026-03-31",
+        batch_id="batch-id",
+    )
     task_keys = [task["task_key"] for task in tasks]
 
     assert task_keys == [
@@ -238,5 +270,46 @@ def test_build_databricks_tasks_for_gold_builds_dependency_aware_tasks() -> None
         "build_gold_reaction_demographic_trends",
         "build_gold_manufacturer_class_serious_trends",
     ]
-    assert tasks[0]["depends_on"] == [{"task_key": "build_curated_case_header"}]
+    assert tasks[0]["depends_on"] == [{"task_key": "build_curated_case_reaction"}]
     assert "--case-header-path" in tasks[0]["spark_python_task"]["parameters"]
+
+
+def test_git_execution_uses_repo_relative_python_files_and_chained_dependencies() -> None:
+    config = _build_test_config()
+    config = replace(
+        config,
+        databricks=replace(
+            config.databricks,
+            execution_source="git",
+            git_url="https://github.com/logeshvar/openfda-faers-pharma-covigilance-reporting.git",
+            git_provider="gitHub",
+            git_branch="main",
+            python_file_base_path="src",
+        ),
+    )
+    manifests = [
+        {
+            "table_name": "curated_case_header",
+            "python_file": "curated/build_case_header.py",
+            "query_window_start": "2025-03-01",
+            "query_window_end": "2025-03-01",
+            "raw_input_s3_uri": "s3://pharma-cv-test/raw/file.ndjson",
+            "selected_ingest_batch_id": "batch-1",
+            "curated_output_s3_uri": "s3://pharma-cv-test/curated/curated_case_header",
+        },
+        {
+            "table_name": "curated_primary_source",
+            "python_file": "curated/build_primary_source.py",
+            "query_window_start": "2025-03-01",
+            "query_window_end": "2025-03-01",
+            "raw_input_s3_uri": "s3://pharma-cv-test/raw/file.ndjson",
+            "selected_ingest_batch_id": "batch-1",
+            "curated_output_s3_uri": "s3://pharma-cv-test/curated/curated_primary_source",
+        },
+    ]
+
+    tasks = build_databricks_tasks_for_curated_manifests(config=config, manifests=manifests, run_id="run-1")
+
+    assert tasks[0]["spark_python_task"]["python_file"] == "src/curated/build_case_header.py"
+    assert tasks[1]["spark_python_task"]["python_file"] == "src/curated/build_primary_source.py"
+    assert tasks[1]["depends_on"] == [{"task_key": "build_curated_case_header"}]

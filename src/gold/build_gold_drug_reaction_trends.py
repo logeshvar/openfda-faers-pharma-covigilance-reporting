@@ -5,6 +5,16 @@ import logging
 from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING, Any
 
+from pathlib import Path
+import sys
+
+for _parent in Path(__file__).resolve().parents:
+    if (_parent / "src").is_dir() and (_parent / "conf").is_dir():
+        sys.path.insert(0, str(_parent))
+        break
+
+from src.common.databricks_runtime import add_common_databricks_args, log_common_databricks_args
+
 if TYPE_CHECKING:
     from pyspark.sql import SparkSession
 
@@ -57,6 +67,7 @@ def run_gold_drug_reaction_trends_job(
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build gold_drug_reaction_trends.")
+    add_common_databricks_args(parser)
     parser.add_argument("--latest-case-path", required=True)
     parser.add_argument("--case-drug-path", required=True)
     parser.add_argument("--case-reaction-path", required=True)
@@ -69,6 +80,7 @@ def main(argv: list[str] | None = None) -> int:
 
     args = parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s - %(message)s")
+    log_common_databricks_args(args)
     spark = SparkSession.builder.appName("build_gold_drug_reaction_trends").getOrCreate()
     try:
         logger.info(

@@ -141,6 +141,7 @@ MinIO:
 
 ```bash
 docker compose exec airflow-scheduler airflow dags list | grep openfda_ingest_raw
+docker compose exec airflow-scheduler airflow dags list | grep databricks_smoke_test
 docker compose exec airflow-scheduler airflow dags list | grep openfda_build_curated_gold
 docker compose exec airflow-scheduler airflow dags list | grep openfda_refresh_metadata
 ```
@@ -176,12 +177,19 @@ and may lag by 3+ months, the default schedule runs daily but ingests a one-day 
 120 days behind the Airflow logical date. This keeps API calls small, avoids partial
 large-month extracts, and only processes data that is likely to be stable.
 
-`openfda_build_curated_gold` currently does the following for Milestone 2:
+`databricks_smoke_test` submits a single Git-backed Databricks Python task that:
+1. creates a Databricks job cluster
+2. uses the configured AWS instance profile
+3. runs `src/databricks/smoke_test_s3_access.py` from Git source
+4. lists the configured S3 bucket/prefix
+5. writes a marker file under `s3://<bucket>/ops/smoke_tests/`
+
+`openfda_build_curated_gold` currently does the following:
 1. resolves the requested reporting window
 2. lists raw NDJSON objects for that window from S3-compatible storage
 3. selects the latest `ingest_batch_id` unless one is explicitly supplied
 4. prepares job manifests for all curated tables
-5. builds a Databricks Jobs API `runs/submit` payload
+5. builds a Git-backed Databricks Jobs API `runs/submit` payload
 6. includes dependency-aware gold table tasks in the same payload
 7. submits the run only when `DATABRICKS_SUBMIT_ENABLED=true`; otherwise it logs a dry-run result
 
@@ -203,6 +211,65 @@ Manual backfill parameters:
   "page_size": 100,
   "max_pages": 200
 }
+```
+
+## Databricks Git Jobs
+
+Production config uses Databricks Git source execution instead of S3-staged Python files.
+The Jobs API payload includes one top-level `git_source` block and task-level relative
+Python paths such as `src/curated/build_case_header.py`.
+
+Required prod values:
+
+```env
+CV_CONFIG_PATH=/opt/airflow/conf/prod.yaml
+S3_BUCKET=pharma-cv-prod
+S3_ENDPOINT_URL=
+DATABRICKS_SUBMIT_ENABLED=true
+DATABRICKS_SECRET_ID=pharma-cv/databricks/prod
+DATABRICKS_EXECUTION_SOURCE=git
+DATABRICKS_GIT_URL=https://github.com/logeshvar/openfda-faers-pharma-covigilance-reporting.git
+DATABRICKS_GIT_PROVIDER=gitHub
+DATABRICKS_GIT_BRANCH=main
+DATABRICKS_PYTHON_FILE_BASE_PATH=src
+DATABRICKS_INSTANCE_PROFILE_ARN=arn:aws:iam::<account-id>:instance-profile/pharma-cv-databricks-role
+```
+
+The AWS Secrets Manager secret should contain only Databricks API auth:
+
+```json
+{
+  "host": "https://dbc-xxxx.cloud.databricks.com",
+  "token": "your-databricks-token"
+}
+```
+
+Run the Databricks smoke test as a dry run:
+
+```bash
+docker compose exec airflow-scheduler airflow dags trigger databricks_smoke_test \
+  --conf '{"dry_run": true}'
+```
+
+Submit the Databricks smoke test:
+
+```bash
+docker compose exec airflow-scheduler airflow dags trigger databricks_smoke_test \
+  --conf '{"dry_run": false}'
+```
+
+Build curated/gold payload without submitting:
+
+```bash
+docker compose exec airflow-scheduler airflow dags trigger openfda_build_curated_gold \
+  --conf '{"window_start":"2025-03-01","window_end":"2025-03-01","dry_run":true}'
+```
+
+Submit curated/gold to Databricks:
+
+```bash
+docker compose exec airflow-scheduler airflow dags trigger openfda_build_curated_gold \
+  --conf '{"window_start":"2025-03-01","window_end":"2025-03-01","dry_run":false}'
 ```
 
 ## Local S3 Prefixes

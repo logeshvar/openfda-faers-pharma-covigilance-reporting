@@ -5,6 +5,15 @@ import logging
 from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING, Any, Iterable, Mapping
 
+import sys
+from pathlib import Path
+
+for _parent in Path(__file__).resolve().parents:
+    if (_parent / "src").is_dir() and (_parent / "conf").is_dir():
+        sys.path.insert(0, str(_parent))
+        break
+
+from src.common.databricks_runtime import add_common_databricks_args, log_common_databricks_args
 from src.common.normalization import as_float as _as_float
 from src.common.normalization import as_text as _as_text
 
@@ -260,6 +269,7 @@ def run_patient_demo_job(
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build curated_patient_demo from raw bronze envelopes.")
+    add_common_databricks_args(parser)
     parser.add_argument("--raw-input-path", required=True, help="Path to raw bronze NDJSON envelopes.")
     parser.add_argument("--output-path", required=True, help="Delta output path for curated_patient_demo.")
     return parser.parse_args(argv)
@@ -270,6 +280,7 @@ def main(argv: list[str] | None = None) -> int:
 
     args = parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s - %(message)s")
+    log_common_databricks_args(args)
 
     spark = SparkSession.builder.appName("build_patient_demo").getOrCreate()
     try:

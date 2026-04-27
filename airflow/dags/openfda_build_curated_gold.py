@@ -82,6 +82,8 @@ def openfda_build_curated_gold():
             "window_start": parsed_window_start.isoformat(),
             "window_end": parsed_window_end.isoformat(),
             "ingest_batch_id": dag_run_conf.get("ingest_batch_id"),
+            "airflow_run_id": context["run_id"],
+            "dry_run": bool(dag_run_conf.get("dry_run", False)),
         }
 
     @task
@@ -101,11 +103,22 @@ def openfda_build_curated_gold():
         return [manifest.to_dict() for manifest in manifests]
 
     @task
-    def build_databricks_payload(curated_manifests: list[dict[str, Any]]) -> dict[str, Any]:
+    def build_databricks_payload(
+        runtime_options: dict[str, Any],
+        curated_manifests: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        batch_id = curated_manifests[0]["selected_ingest_batch_id"] if curated_manifests else None
         tasks = build_databricks_tasks_for_curated_manifests(
             config=CONFIG,
             manifests=curated_manifests,
-        ) + build_databricks_tasks_for_gold(config=CONFIG)
+            run_id=runtime_options["airflow_run_id"],
+        ) + build_databricks_tasks_for_gold(
+            config=CONFIG,
+            run_id=runtime_options["airflow_run_id"],
+            window_start=runtime_options["window_start"],
+            window_end=runtime_options["window_end"],
+            batch_id=batch_id,
+        )
         run_name = (
             f"{CONFIG.databricks.run_name_prefix}_curated_gold_"
             f"{curated_manifests[0]['query_window_start']}_{curated_manifests[0]['query_window_end']}"
@@ -113,8 +126,13 @@ def openfda_build_curated_gold():
         return build_databricks_submit_run_payload(config=CONFIG, run_name=run_name, tasks=tasks)
 
     @task
-    def submit_or_log_databricks_run(payload: dict[str, Any]) -> dict[str, Any]:
-        result = submit_databricks_run(config=CONFIG, payload=payload)
+    def submit_or_log_databricks_run(runtime_options: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
+        config = load_config(include_databricks_secrets=not runtime_options["dry_run"])
+        result = submit_databricks_run(
+            config=config,
+            payload=payload,
+            dry_run=runtime_options["dry_run"],
+        )
         logger.info(
             "Databricks curated run result submitted=%s run_id=%s url=%s message=%s",
             result.submitted,
@@ -126,8 +144,8 @@ def openfda_build_curated_gold():
 
     runtime_options = resolve_runtime_options()
     curated_manifests = prepare_curated_jobs(runtime_options)
-    databricks_payload = build_databricks_payload(curated_manifests)
-    submit_or_log_databricks_run(databricks_payload)
+    databricks_payload = build_databricks_payload(runtime_options, curated_manifests)
+    submit_or_log_databricks_run(runtime_options, databricks_payload)
 
 
 openfda_build_curated_gold()

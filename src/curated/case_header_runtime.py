@@ -7,6 +7,7 @@ from typing import Any
 
 from src.common.aws_clients import build_s3_client
 from src.common.config import AppConfig
+from src.common.databricks_jobs import build_common_task_parameters, build_spark_python_task
 from src.common.path_builders import build_s3_uri, build_table_s3_uri
 from src.curated.build_case_header import (
     CASE_HEADER_KEY_COLUMNS,
@@ -329,8 +330,10 @@ def resolve_curated_job_manifests(
 def build_databricks_tasks_for_curated_manifests(
     config: AppConfig,
     manifests: list[CuratedJobManifest | dict[str, Any]],
+    run_id: str,
 ) -> list[dict[str, Any]]:
     tasks: list[dict[str, Any]] = []
+    previous_task_key: str | None = None
 
     for manifest in manifests:
         table_name = manifest["table_name"] if isinstance(manifest, dict) else manifest.table_name
@@ -343,27 +346,37 @@ def build_databricks_tasks_for_curated_manifests(
             if isinstance(manifest, dict)
             else manifest.curated_output_s3_uri
         )
-        python_file = "/".join(
-            [
-                config.databricks.python_file_base_uri.rstrip("/"),
-                python_file_value.strip("/"),
-            ]
+        window_start = manifest["query_window_start"] if isinstance(manifest, dict) else manifest.query_window_start
+        window_end = manifest["query_window_end"] if isinstance(manifest, dict) else manifest.query_window_end
+        batch_id = (
+            manifest["selected_ingest_batch_id"]
+            if isinstance(manifest, dict)
+            else manifest.selected_ingest_batch_id
         )
+
+        task_key = f"build_{table_name}"
+        parameters = build_common_task_parameters(
+            config=config,
+            run_id=run_id,
+            window_start=window_start,
+            window_end=window_end,
+            batch_id=batch_id,
+        ) + [
+            "--raw-input-path",
+            raw_input_s3_uri,
+            "--output-path",
+            curated_output_s3_uri,
+        ]
         tasks.append(
-            {
-                "task_key": f"build_{table_name}",
-                "job_cluster_key": "curated_job_cluster",
-                "spark_python_task": {
-                    "python_file": python_file,
-                    "parameters": [
-                        "--raw-input-path",
-                        raw_input_s3_uri,
-                        "--output-path",
-                        curated_output_s3_uri,
-                    ],
-                },
-            }
+            build_spark_python_task(
+                config=config,
+                task_key=task_key,
+                python_file=python_file_value,
+                parameters=parameters,
+                depends_on=[previous_task_key] if previous_task_key else None,
+            )
         )
+        previous_task_key = task_key
 
     return tasks
 
@@ -376,11 +389,13 @@ def _table_uri(config: AppConfig, layer_prefix: str, table_name: str) -> str:
     )
 
 
-def _python_file(config: AppConfig, relative_path: str) -> str:
-    return "/".join([config.databricks.python_file_base_uri.rstrip("/"), relative_path.strip("/")])
-
-
-def build_databricks_tasks_for_gold(config: AppConfig) -> list[dict[str, Any]]:
+def build_databricks_tasks_for_gold(
+    config: AppConfig,
+    run_id: str,
+    window_start: str,
+    window_end: str,
+    batch_id: str | None = None,
+) -> list[dict[str, Any]]:
     latest_case_path = _table_uri(config, config.s3.gold_prefix, GOLD_LATEST_CASE_HELPER_TABLE)
     case_header_path = _table_uri(config, config.s3.curated_prefix, CURATED_CASE_HEADER_TABLE)
     primary_source_path = _table_uri(config, config.s3.curated_prefix, CURATED_PRIMARY_SOURCE_TABLE)
@@ -388,95 +403,85 @@ def build_databricks_tasks_for_gold(config: AppConfig) -> list[dict[str, Any]]:
     case_drug_path = _table_uri(config, config.s3.curated_prefix, CURATED_CASE_DRUG_TABLE)
     case_drug_openfda_path = _table_uri(config, config.s3.curated_prefix, CURATED_CASE_DRUG_OPENFDA_TABLE)
     case_reaction_path = _table_uri(config, config.s3.curated_prefix, CURATED_CASE_REACTION_TABLE)
+    common_parameters = build_common_task_parameters(
+        config=config,
+        run_id=run_id,
+        window_start=window_start,
+        window_end=window_end,
+        batch_id=batch_id,
+    )
 
     return [
-        {
-            "task_key": f"build_{GOLD_LATEST_CASE_HELPER_TABLE}",
-            "job_cluster_key": "curated_job_cluster",
-            "depends_on": [{"task_key": f"build_{CURATED_CASE_HEADER_TABLE}"}],
-            "spark_python_task": {
-                "python_file": _python_file(config, "gold/build_latest_case_helper.py"),
-                "parameters": [
-                    "--case-header-path",
-                    case_header_path,
-                    "--output-path",
-                    latest_case_path,
-                ],
-            },
-        },
-        {
-            "task_key": f"build_{GOLD_CASE_SERIOUSNESS_TRENDS_TABLE}",
-            "job_cluster_key": "curated_job_cluster",
-            "depends_on": [{"task_key": f"build_{GOLD_LATEST_CASE_HELPER_TABLE}"}],
-            "spark_python_task": {
-                "python_file": _python_file(config, "gold/build_gold_case_seriousness_trends.py"),
-                "parameters": ["--latest-case-path", latest_case_path, "--output-path", _table_uri(config, config.s3.gold_prefix, GOLD_CASE_SERIOUSNESS_TRENDS_TABLE)],
-            },
-        },
-        {
-            "task_key": f"build_{GOLD_DRUG_REACTION_TRENDS_TABLE}",
-            "job_cluster_key": "curated_job_cluster",
-            "depends_on": [
-                {"task_key": f"build_{GOLD_LATEST_CASE_HELPER_TABLE}"},
-                {"task_key": f"build_{CURATED_CASE_DRUG_TABLE}"},
-                {"task_key": f"build_{CURATED_CASE_REACTION_TABLE}"},
+        build_spark_python_task(
+            config=config,
+            task_key=f"build_{GOLD_LATEST_CASE_HELPER_TABLE}",
+            python_file="gold/build_latest_case_helper.py",
+            depends_on=[f"build_{CURATED_CASE_REACTION_TABLE}"],
+            parameters=common_parameters
+            + ["--case-header-path", case_header_path, "--output-path", latest_case_path],
+        ),
+        build_spark_python_task(
+            config=config,
+            task_key=f"build_{GOLD_CASE_SERIOUSNESS_TRENDS_TABLE}",
+            python_file="gold/build_gold_case_seriousness_trends.py",
+            depends_on=[f"build_{GOLD_LATEST_CASE_HELPER_TABLE}"],
+            parameters=common_parameters
+            + [
+                "--latest-case-path",
+                latest_case_path,
+                "--output-path",
+                _table_uri(config, config.s3.gold_prefix, GOLD_CASE_SERIOUSNESS_TRENDS_TABLE),
             ],
-            "spark_python_task": {
-                "python_file": _python_file(config, "gold/build_gold_drug_reaction_trends.py"),
-                "parameters": [
-                    "--latest-case-path",
-                    latest_case_path,
-                    "--case-drug-path",
-                    case_drug_path,
-                    "--case-reaction-path",
-                    case_reaction_path,
-                    "--output-path",
-                    _table_uri(config, config.s3.gold_prefix, GOLD_DRUG_REACTION_TRENDS_TABLE),
-                ],
-            },
-        },
-        {
-            "task_key": f"build_{GOLD_REACTION_DEMOGRAPHIC_TRENDS_TABLE}",
-            "job_cluster_key": "curated_job_cluster",
-            "depends_on": [
-                {"task_key": f"build_{GOLD_LATEST_CASE_HELPER_TABLE}"},
-                {"task_key": f"build_{CURATED_CASE_REACTION_TABLE}"},
-                {"task_key": f"build_{CURATED_PATIENT_DEMO_TABLE}"},
-                {"task_key": f"build_{CURATED_PRIMARY_SOURCE_TABLE}"},
+        ),
+        build_spark_python_task(
+            config=config,
+            task_key=f"build_{GOLD_DRUG_REACTION_TRENDS_TABLE}",
+            python_file="gold/build_gold_drug_reaction_trends.py",
+            depends_on=[f"build_{GOLD_CASE_SERIOUSNESS_TRENDS_TABLE}"],
+            parameters=common_parameters
+            + [
+                "--latest-case-path",
+                latest_case_path,
+                "--case-drug-path",
+                case_drug_path,
+                "--case-reaction-path",
+                case_reaction_path,
+                "--output-path",
+                _table_uri(config, config.s3.gold_prefix, GOLD_DRUG_REACTION_TRENDS_TABLE),
             ],
-            "spark_python_task": {
-                "python_file": _python_file(config, "gold/build_gold_reaction_demographic_trends.py"),
-                "parameters": [
-                    "--latest-case-path",
-                    latest_case_path,
-                    "--reaction-path",
-                    case_reaction_path,
-                    "--patient-demo-path",
-                    patient_demo_path,
-                    "--primary-source-path",
-                    primary_source_path,
-                    "--output-path",
-                    _table_uri(config, config.s3.gold_prefix, GOLD_REACTION_DEMOGRAPHIC_TRENDS_TABLE),
-                ],
-            },
-        },
-        {
-            "task_key": f"build_{GOLD_MANUFACTURER_CLASS_SERIOUS_TRENDS_TABLE}",
-            "job_cluster_key": "curated_job_cluster",
-            "depends_on": [
-                {"task_key": f"build_{GOLD_LATEST_CASE_HELPER_TABLE}"},
-                {"task_key": f"build_{CURATED_CASE_DRUG_OPENFDA_TABLE}"},
+        ),
+        build_spark_python_task(
+            config=config,
+            task_key=f"build_{GOLD_REACTION_DEMOGRAPHIC_TRENDS_TABLE}",
+            python_file="gold/build_gold_reaction_demographic_trends.py",
+            depends_on=[f"build_{GOLD_DRUG_REACTION_TRENDS_TABLE}"],
+            parameters=common_parameters
+            + [
+                "--latest-case-path",
+                latest_case_path,
+                "--reaction-path",
+                case_reaction_path,
+                "--patient-demo-path",
+                patient_demo_path,
+                "--primary-source-path",
+                primary_source_path,
+                "--output-path",
+                _table_uri(config, config.s3.gold_prefix, GOLD_REACTION_DEMOGRAPHIC_TRENDS_TABLE),
             ],
-            "spark_python_task": {
-                "python_file": _python_file(config, "gold/build_gold_manufacturer_class_serious_trends.py"),
-                "parameters": [
-                    "--latest-case-path",
-                    latest_case_path,
-                    "--case-drug-openfda-path",
-                    case_drug_openfda_path,
-                    "--output-path",
-                    _table_uri(config, config.s3.gold_prefix, GOLD_MANUFACTURER_CLASS_SERIOUS_TRENDS_TABLE),
-                ],
-            },
-        },
+        ),
+        build_spark_python_task(
+            config=config,
+            task_key=f"build_{GOLD_MANUFACTURER_CLASS_SERIOUS_TRENDS_TABLE}",
+            python_file="gold/build_gold_manufacturer_class_serious_trends.py",
+            depends_on=[f"build_{GOLD_REACTION_DEMOGRAPHIC_TRENDS_TABLE}"],
+            parameters=common_parameters
+            + [
+                "--latest-case-path",
+                latest_case_path,
+                "--case-drug-openfda-path",
+                case_drug_openfda_path,
+                "--output-path",
+                _table_uri(config, config.s3.gold_prefix, GOLD_MANUFACTURER_CLASS_SERIOUS_TRENDS_TABLE),
+            ],
+        ),
     ]

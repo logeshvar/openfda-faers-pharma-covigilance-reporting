@@ -53,10 +53,20 @@ class DatabricksSettings:
     host: str | None
     token: str | None
     run_name_prefix: str
-    python_file_base_uri: str
+    python_file_base_uri: str | None
     spark_version: str
     node_type_id: str
     num_workers: int
+    secret_id: str | None = None
+    execution_source: str = "s3"
+    git_url: str | None = None
+    git_provider: str | None = None
+    git_branch: str | None = None
+    python_file_base_path: str = "src"
+    autotermination_minutes: int = 30
+    instance_profile_arn: str | None = None
+    data_security_mode: str | None = None
+    single_user_name: str | None = None
 
 
 @dataclass(frozen=True)
@@ -183,8 +193,11 @@ def _env_secret_or_default(
     return default
 
 
-@lru_cache(maxsize=4)
-def load_config(config_path: str | Path | None = None) -> AppConfig:
+@lru_cache(maxsize=8)
+def load_config(
+    config_path: str | Path | None = None,
+    include_databricks_secrets: bool = False,
+) -> AppConfig:
     config_path_from_env = _first_env("CV_CONFIG_PATH")
     resolved_config_path = Path(config_path_from_env or config_path or DEFAULT_CONFIG_PATH).expanduser()
     config_data = _read_yaml(resolved_config_path)
@@ -247,7 +260,14 @@ def load_config(config_path: str | Path | None = None) -> AppConfig:
         ),
     )
 
-    databricks_secret = _load_databricks_secret(config_data, region_name=s3.region_name)
+    databricks_secret = (
+        _load_databricks_secret(config_data, region_name=s3.region_name)
+        if include_databricks_secrets
+        else {}
+    )
+    databricks_secret_id = _first_env("DATABRICKS_SECRET_ID") or _get_nested(
+        config_data, "databricks", "secret_id", default=None
+    )
 
     databricks = DatabricksSettings(
         submit_enabled=_as_bool(
@@ -256,6 +276,7 @@ def load_config(config_path: str | Path | None = None) -> AppConfig:
                 _get_nested(config_data, "databricks", "submit_enabled", default=False),
             )
         ),
+        secret_id=str(databricks_secret_id) if databricks_secret_id else None,
         host=_env_secret_or_default(
             "DATABRICKS_HOST",
             databricks_secret,
@@ -276,19 +297,37 @@ def load_config(config_path: str | Path | None = None) -> AppConfig:
                 _get_nested(config_data, "databricks", "run_name_prefix", default="pharma-cv"),
             )
         ),
-        python_file_base_uri=str(
-            _env_secret_or_default(
-                "DATABRICKS_PYTHON_FILE_BASE_URI",
-                databricks_secret,
-                "DATABRICKS_PYTHON_FILE_BASE_URI_SECRET_KEY",
-                "python_file_base_uri",
-                _get_nested(
-                    config_data,
-                    "databricks",
-                    "python_file_base_uri",
-                    default=f"s3://{s3.bucket_name}/jobs/src",
-                ),
+        execution_source=str(
+            _env_or_default(
+                "DATABRICKS_EXECUTION_SOURCE",
+                _get_nested(config_data, "databricks", "execution_source", default="s3"),
             )
+        ).lower(),
+        git_url=_first_env("DATABRICKS_GIT_URL")
+        or _get_nested(config_data, "databricks", "git_url", default=None),
+        git_provider=_first_env("DATABRICKS_GIT_PROVIDER")
+        or _get_nested(config_data, "databricks", "git_provider", default=None),
+        git_branch=_first_env("DATABRICKS_GIT_BRANCH")
+        or _get_nested(config_data, "databricks", "git_branch", default=None),
+        python_file_base_path=str(
+            _env_or_default(
+                "DATABRICKS_PYTHON_FILE_BASE_PATH",
+                _get_nested(config_data, "databricks", "python_file_base_path", default="src"),
+            )
+        ),
+        python_file_base_uri=(
+            str(
+                _env_or_default(
+                    "DATABRICKS_PYTHON_FILE_BASE_URI",
+                    _get_nested(
+                        config_data,
+                        "databricks",
+                        "python_file_base_uri",
+                        default=f"s3://{s3.bucket_name}/jobs/src",
+                    ),
+                )
+            )
+            or None
         ),
         spark_version=str(
             _env_or_default(
@@ -308,6 +347,18 @@ def load_config(config_path: str | Path | None = None) -> AppConfig:
                 _get_nested(config_data, "databricks", "num_workers", default=1),
             )
         ),
+        autotermination_minutes=_as_int(
+            _env_or_default(
+                "DATABRICKS_AUTOTERMINATION_MINUTES",
+                _get_nested(config_data, "databricks", "autotermination_minutes", default=30),
+            )
+        ),
+        instance_profile_arn=_first_env("DATABRICKS_INSTANCE_PROFILE_ARN")
+        or _get_nested(config_data, "databricks", "instance_profile_arn", default=None),
+        data_security_mode=_first_env("DATABRICKS_DATA_SECURITY_MODE")
+        or _get_nested(config_data, "databricks", "data_security_mode", default=None),
+        single_user_name=_first_env("DATABRICKS_SINGLE_USER_NAME")
+        or _get_nested(config_data, "databricks", "single_user_name", default=None),
     )
 
     metadata = MetadataSettings(

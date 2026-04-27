@@ -13,11 +13,20 @@ storage:
 
 databricks:
   submit_enabled: true
+  secret_id: pharma-cv/databricks/prod
   run_name_prefix: pharma-cv
-  python_file_base_uri: s3://pharma-cv-prod/jobs/src
+  execution_source: git
+  git_url: https://github.com/logeshvar/openfda-faers-pharma-covigilance-reporting.git
+  git_provider: gitHub
+  git_branch: main
+  python_file_base_path: src
   spark_version: 14.3.x-scala2.12
   node_type_id: i3.xlarge
-  num_workers: 2
+  num_workers: 1
+  autotermination_minutes: 30
+  instance_profile_arn: arn:aws:iam::202564564772:instance-profile/pharma-cv-databricks-role
+  data_security_mode:
+  single_user_name:
 
 metadata:
   glue_database_name: pharma_cv_prod

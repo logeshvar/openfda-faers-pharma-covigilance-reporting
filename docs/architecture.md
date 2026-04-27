@@ -19,8 +19,8 @@ flowchart LR
     D --> F["MinIO ops/audit prefix<br/>ops/audit/..."]
     E --> G["Airflow DAG: openfda_build_curated_gold"]
     G --> H["case_header_runtime.py<br/>select latest raw batch"]
-    H --> I["Databricks Jobs API payload"]
-    I --> J["Spark/Delta curated jobs"]
+    H --> I["Databricks Jobs API payload<br/>Git source + shared job cluster"]
+    I --> J["Spark/Delta curated jobs<br/>Python scripts from Git"]
     J --> K["Curated Delta tables"]
     K --> L["Gold Delta tables"]
     L --> M["Glue Catalog registration"]
@@ -51,7 +51,7 @@ The current gold scope includes:
 - `gold_reaction_demographic_trends`
 - `gold_manufacturer_class_serious_trends`
 
-The Airflow curated/gold DAG now prepares a Databricks Jobs API `runs/submit` payload. In dev, submission is disabled by default so the payload can be reviewed without needing live Databricks credentials. In the AWS-oriented config, submission is enabled and requires `DATABRICKS_HOST` plus `DATABRICKS_TOKEN` from the runtime environment or a secrets backend.
+The Airflow curated/gold DAG now prepares a Git-backed Databricks Jobs API `runs/submit` payload. In dev, submission is disabled by default so the payload can be reviewed without needing live Databricks credentials. In the AWS-oriented config, submission is enabled and reads Databricks `host` and `token` from AWS Secrets Manager. The job cluster uses the configured AWS instance profile to read and write S3 raw, curated, gold, and ops paths.
 
 After Databricks finishes, `openfda_refresh_metadata` can register the Delta table locations for Glue/Athena.
 
