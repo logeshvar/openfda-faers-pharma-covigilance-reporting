@@ -185,6 +185,10 @@ large-month extracts, and only processes data that is likely to be stable.
 6. includes dependency-aware gold table tasks in the same payload
 7. submits the run only when `DATABRICKS_SUBMIT_ENABLED=true`; otherwise it logs a dry-run result
 
+For manual curated/gold builds, use the same `window_start` / `window_end` that already
+exists in raw storage. If you just ingested a one-day smoke-test window, trigger curated/gold
+with that same one-day window.
+
 `openfda_refresh_metadata` currently does the following:
 1. prepares Athena DDL for curated and gold Delta table locations
 2. creates the Glue database and starts Athena DDL queries only when triggered with `{"execute_refresh": true}`

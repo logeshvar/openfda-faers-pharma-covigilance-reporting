@@ -16,22 +16,19 @@ from src.curated.case_header_runtime import (
     resolve_curated_job_manifests,
 )
 from src.ingestion.extract_openfda import parse_window_date
+from src.ingestion.windowing import resolve_lagged_daily_window
 
 logger = logging.getLogger(__name__)
 CONFIG = load_config()
 
 
 def _default_window_from_context(context: dict[str, Any]) -> tuple[str, str]:
-    interval_start = context.get("data_interval_start")
-    interval_end = context.get("data_interval_end")
-
-    if interval_start and interval_end:
-        return interval_start.date().isoformat(), (interval_end - timedelta(days=1)).date().isoformat()
-
-    logical_date = context["logical_date"].date()
-    previous_month_end = logical_date.replace(day=1) - timedelta(days=1)
-    previous_month_start = previous_month_end.replace(day=1)
-    return previous_month_start.isoformat(), previous_month_end.isoformat()
+    window_start, window_end = resolve_lagged_daily_window(
+        reference_date=context["logical_date"],
+        source_lag_days=CONFIG.ingestion.source_lag_days,
+        default_window_days=CONFIG.ingestion.default_window_days,
+    )
+    return window_start.isoformat(), window_end.isoformat()
 
 
 @dag(
@@ -59,8 +56,8 @@ def _default_window_from_context(context: dict[str, Any]) -> tuple[str, str]:
     ```json
     {
       "window_start": "2025-03-01",
-      "window_end": "2025-03-31",
-      "ingest_batch_id": "openfda_drug_event_20250301_20250331_20260421T035810Z"
+      "window_end": "2025-03-01",
+      "ingest_batch_id": "openfda_drug_event_20250301_20250301_20260426T114125Z"
     }
     ```
     """,
