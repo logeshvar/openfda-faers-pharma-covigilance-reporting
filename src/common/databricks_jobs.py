@@ -15,6 +15,9 @@ logger = logging.getLogger(__name__)
 DATABRICKS_JOB_CLUSTER_KEY = "pharma_cv_job_cluster"
 SUPPORTED_EXECUTION_SOURCES = {"git", "s3"}
 SUPPORTED_SUBMISSION_MODES = {"runs_submit", "saved_job"}
+ATHENA_COMPATIBLE_DELTA_SPARK_CONF = {
+    "spark.databricks.delta.properties.defaults.enableDeletionVectors": "false",
+}
 
 
 @dataclass(frozen=True)
@@ -142,6 +145,7 @@ def build_databricks_new_cluster(config: AppConfig) -> dict[str, Any]:
         "spark_version": config.databricks.spark_version,
         "node_type_id": config.databricks.node_type_id,
         "num_workers": config.databricks.num_workers,
+        "spark_conf": ATHENA_COMPATIBLE_DELTA_SPARK_CONF,
         "aws_attributes": {
             "availability": "ON_DEMAND",
         },

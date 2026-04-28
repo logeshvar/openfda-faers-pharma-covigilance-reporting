@@ -88,6 +88,9 @@ def test_build_databricks_submit_run_payload_materializes_task_clusters() -> Non
     assert payload["run_name"] == "pharma-cv_curated_2026-03-01_2026-03-31"
     assert "job_clusters" not in payload
     assert payload["tasks"][0]["new_cluster"]["spark_version"] == "14.3.x-scala2.12"
+    assert payload["tasks"][0]["new_cluster"]["spark_conf"] == {
+        "spark.databricks.delta.properties.defaults.enableDeletionVectors": "false"
+    }
     assert (
         payload["tasks"][0]["new_cluster"]["aws_attributes"]["instance_profile_arn"]
         == "arn:aws:iam::123456789012:instance-profile/test"
@@ -145,6 +148,9 @@ def test_build_databricks_saved_job_settings_uses_shared_job_cluster() -> None:
     assert settings["max_concurrent_runs"] == 1
     assert settings["job_clusters"][0]["job_cluster_key"] == "pharma_cv_job_cluster"
     assert settings["job_clusters"][0]["new_cluster"]["spark_version"] == "14.3.x-scala2.12"
+    assert settings["job_clusters"][0]["new_cluster"]["spark_conf"] == {
+        "spark.databricks.delta.properties.defaults.enableDeletionVectors": "false"
+    }
     assert settings["tasks"][0]["job_cluster_key"] == "pharma_cv_job_cluster"
     assert "new_cluster" not in settings["tasks"][0]
     assert settings["git_source"]["git_branch"] == "main"

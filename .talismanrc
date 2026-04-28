@@ -12,7 +12,7 @@ fileignoreconfig:
 - filename: README.md
   checksum: bcf18df4afb33149db53f1d723432a120ffc3b9076a601d7ccddfd491e51e817
 - filename: docs/architecture.md
-  checksum: b7858183ccacaae41ed90763d420e8fa955b4e04f7a31512bed343258927899c
+  checksum: e30b4f80b9c79cdaf2ff5a69303441cf1ac64eb5a8d948272a187409680449f0
 - filename: src/common/databricks_jobs.py
   checksum: b085adf607502755e5e3353b1c774ed29aef05082554c9eae1cb3ec8aedded7e
 - filename: src/common/config.py

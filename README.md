@@ -321,6 +321,7 @@ For target-style execution, use `conf/prod.yaml` as the shape of the AWS config:
 - `DATABRICKS_HOST` and `DATABRICKS_TOKEN` should come from Secrets Manager, an Airflow connection, or the managed runtime environment.
 - Databricks execution uses Git source by default, so `DATABRICKS_GIT_URL`, `DATABRICKS_GIT_PROVIDER`, and `DATABRICKS_GIT_BRANCH` identify the repo revision to run.
 - `DATABRICKS_PYTHON_FILE_BASE_URI` is only needed for the legacy S3 script-source mode.
+- Databricks job clusters disable Delta deletion vectors by default so S3 Delta tables remain compatible with Athena's native Delta reader.
 
 ## Current Assumptions
 
