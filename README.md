@@ -282,6 +282,13 @@ docker compose exec airflow-scheduler airflow dags trigger openfda_build_curated
   --conf '{"window_start":"2025-03-01","window_end":"2025-03-01","dry_run":false}'
 ```
 
+Refresh Glue/Athena metadata. Use `force_recreate` when existing Glue Delta table entries were created with stale or empty schema metadata:
+
+```bash
+docker compose exec airflow-scheduler airflow dags trigger openfda_refresh_metadata \
+  --conf '{"execute_refresh":true,"force_recreate":true}'
+```
+
 ## Local S3 Prefixes
 
 Raw data:

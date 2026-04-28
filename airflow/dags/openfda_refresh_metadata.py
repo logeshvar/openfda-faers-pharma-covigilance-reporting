@@ -34,6 +34,13 @@ CONFIG = load_config()
     ```json
     {"execute_refresh": true}
     ```
+
+    If existing Glue tables have stale or empty Delta schema metadata, recreate
+    only the Glue catalog entries while preserving S3 data:
+
+    ```json
+    {"execute_refresh": true, "force_recreate": true}
+    ```
     """,
 )
 def openfda_refresh_metadata():
@@ -45,6 +52,7 @@ def openfda_refresh_metadata():
 
         return {
             "execute_refresh": bool(dag_run_conf.get("execute_refresh", False)),
+            "force_recreate": bool(dag_run_conf.get("force_recreate", False)),
             "glue_database_name": CONFIG.metadata.glue_database_name,
         }
 
@@ -65,9 +73,14 @@ def openfda_refresh_metadata():
                 "query_execution_ids": [],
             }
 
-        query_execution_ids = refresh_glue_delta_tables(CONFIG)
+        query_execution_ids = refresh_glue_delta_tables(
+            CONFIG,
+            force_recreate=runtime_options["force_recreate"],
+            wait_for_completion=True,
+        )
         return {
             "executed": True,
+            "force_recreate": runtime_options["force_recreate"],
             "glue_database_name": runtime_options["glue_database_name"],
             "ddl_statement_count": len(ddl_statements),
             "query_execution_ids": query_execution_ids,

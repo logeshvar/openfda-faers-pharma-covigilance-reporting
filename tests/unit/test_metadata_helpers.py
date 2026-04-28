@@ -16,6 +16,7 @@ from src.common.config import (
 from src.metadata.athena_validation_queries import render_validation_queries
 from src.metadata.glue_refresh import (
     build_athena_create_delta_table_sql,
+    build_athena_create_delta_table_sql_for_recreate,
     build_delta_table_registrations,
 )
 
@@ -79,6 +80,15 @@ def test_build_athena_create_delta_table_sql_sets_delta_property() -> None:
 
     assert "CREATE EXTERNAL TABLE IF NOT EXISTS pharma_cv_test.curated_case_header" in sql
     assert "TBLPROPERTIES ('table_type'='DELTA')" in sql
+
+
+def test_build_athena_create_delta_table_sql_for_recreate_omits_if_not_exists() -> None:
+    registration = build_delta_table_registrations(_build_test_config())[0]
+
+    sql = build_athena_create_delta_table_sql_for_recreate("pharma_cv_test", registration)
+
+    assert "CREATE EXTERNAL TABLE pharma_cv_test.curated_case_header" in sql
+    assert "IF NOT EXISTS" not in sql
 
 
 def test_render_validation_queries_qualifies_tables_with_database() -> None:
