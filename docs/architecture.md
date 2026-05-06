@@ -1,42 +1,68 @@
 # Architecture
 
-This project is built around the target portfolio architecture first:
-- Airflow orchestrates the pipeline.
-- S3 is the system of record for raw, ops/audit, curated, and gold.
-- Databricks Spark jobs transform raw JSON into Delta tables.
-- Glue Catalog and Athena provide metadata and SQL access.
+This project implements a batch pharmacovigilance reporting pipeline on an AWS-style lakehouse architecture. It is designed around openFDA drug adverse event data, Airflow orchestration, S3 storage zones, Databricks Spark transformations, Delta Lake outputs, and Glue/Athena query access.
 
-Local development uses MinIO only as an S3-compatible emulator.
+The goal is safety signal monitoring and reporting. The pipeline does not diagnose patients, prove causality, or assert that a drug caused a reaction. Drug-reaction outputs should be read as co-reporting patterns within the same safety report.
 
-## Local Development Flow
+## End-To-End Flow
 
 ```mermaid
 flowchart LR
-    A["openFDA Drug Event API"] --> B["Airflow DAG: openfda_ingest_raw"]
-    B --> C["extract_openfda.py"]
-    C --> D["raw_checks.py"]
-    D --> E["MinIO raw prefix<br/>raw/openfda/drug_event/..."]
-    D --> F["MinIO ops/audit prefix<br/>ops/audit/..."]
-    E --> G["Airflow DAG: openfda_build_curated_gold"]
-    G --> H["case_header_runtime.py<br/>select latest raw batch"]
-    H --> I["Databricks Jobs API payload<br/>Git source + shared job cluster"]
-    I --> J["Spark/Delta curated jobs<br/>Python scripts from Git"]
-    J --> K["Curated Delta tables"]
+    A["openFDA Drug Event API"] --> B["Airflow: openfda_ingest_raw"]
+    B --> C["Raw extraction and DQ"]
+    C --> D["S3 Raw NDJSON<br/>append-only"]
+    C --> E["S3 Ops/Audit"]
+    D --> F["Airflow: openfda_build_curated_gold"]
+    F --> G["Databricks Jobs API<br/>Git source + shared job cluster"]
+    G --> H["Curated Spark tasks<br/>parallel"]
+    H --> I["Curated Delta tables"]
+    I --> J["Latest case helper"]
+    J --> K["Gold Spark tasks<br/>parallel"]
     K --> L["Gold Delta tables"]
-    L --> M["Glue Catalog registration"]
-    M --> N["Athena validation and views"]
+    L --> M["Airflow: openfda_refresh_metadata"]
+    M --> N["Glue Catalog"]
+    N --> O["Athena SQL"]
+    K --> P["Optional future Bedrock summaries"]
 ```
 
-## Current Code Path
+## Storage Zones
 
-The implemented ingestion flow is fully runnable locally today:
-- Airflow resolves a lagged daily scheduled window or a manual batch window.
-- Scheduled raw ingestion runs behind a configurable source lag because FAERS/openFDA is updated quarterly and may lag by 3+ months.
-- The openFDA client paginates by `receivedate`, auto-extends low page caps when openFDA reports more records than expected, and decomposes manual multi-day windows into daily API queries.
-- Raw records are wrapped in bronze-style envelopes and written as immutable NDJSON.
-- A batch audit document is written even when raw DQ fails.
+Raw is the immutable system-of-record landing zone. Each run writes a new batch under a query-window and ingest-batch prefix, so repeated runs do not overwrite previous raw data.
 
-The current curated scope includes:
+Ops stores operational metadata such as ingestion audit records, Athena query results, and smoke-test markers.
+
+Curated contains normalized Delta tables that preserve all report versions. The report version key is `safetyreportid` plus `safetyreportversion`.
+
+Gold contains latest-version reporting tables for trend analysis. Gold jobs read curated data, select the latest report version per `safetyreportid`, and rebuild only affected `report_year` and `report_month` partitions.
+
+## Airflow Orchestration
+
+`openfda_ingest_raw` resolves a scheduled or manual window, extracts openFDA drug event records by `receivedate`, runs raw DQ checks, writes raw NDJSON to S3, and writes an audit record to ops.
+
+`databricks_smoke_test` submits a single Git-backed Databricks task to validate API auth, cluster creation, instance-profile S3 access, and basic S3 read/write behavior.
+
+`openfda_build_curated_gold` selects the latest raw batch for a window unless a specific `ingest_batch_id` is supplied. It creates or resets a saved Databricks Job and triggers `run-now`. Curated tasks run in parallel, `gold_latest_case_helper` waits for the curated layer, and the final gold trend tasks run in parallel after the helper is built.
+
+`openfda_refresh_metadata` registers curated and gold Delta locations in Glue through Athena DDL. It can recreate stale Glue table entries without deleting S3 data by using `force_recreate=true`.
+
+## Databricks Job Design
+
+The Databricks path uses Git source execution. Spark Python tasks point to repo-relative files such as `src/curated/build_case_header.py`, which keeps the execution path close to how the project is developed and reviewed.
+
+The curated/gold job uses a shared job cluster instead of creating one cluster per task. The cluster is configured with an AWS instance profile for S3 access and with Delta deletion vectors disabled for Athena compatibility:
+
+```json
+{
+  "spark.databricks.delta.properties.defaults.enableDeletionVectors": "false"
+}
+```
+
+The cluster-level setting matters because Athena's native Delta reader cannot read Delta tables created with newer deletion-vector table features.
+
+## Curated Model
+
+Curated tables normalize the nested openFDA case payload into report-level and child entities:
+
 - `curated_case_header`
 - `curated_primary_source`
 - `curated_patient_demo`
@@ -44,66 +70,62 @@ The current curated scope includes:
 - `curated_case_drug_openfda`
 - `curated_case_reaction`
 
-The current gold scope includes:
-- `gold_latest_case_helper`
+Curated writes use Delta merge/upsert behavior once a table exists. This keeps all report versions while allowing safe reruns for the same raw batch or query window.
+
+`curated_case_drug` and `curated_case_reaction` are independent child tables under the same report version. There is no direct row-level causal linkage between a drug row and a reaction row.
+
+## Gold Model
+
+Gold outputs are designed for portfolio-friendly safety monitoring questions:
+
 - `gold_case_seriousness_trends`
 - `gold_drug_reaction_trends`
 - `gold_reaction_demographic_trends`
 - `gold_manufacturer_class_serious_trends`
+- `gold_latest_case_helper`
 
-Curated Delta tables merge incoming raw-batch results by their business keys, preserving all report versions without replacing unrelated history. Gold tables read the latest curated state and overwrite only the affected `report_year`/`report_month` partitions with Delta `replaceWhere`, which keeps one-day reruns from replacing broader gold history.
+Gold uses the latest version per `safetyreportid` for reporting. Partition-aware writes use Delta `replaceWhere` over affected `report_year` and `report_month` values, which protects broader history during one-day reruns.
 
-The Airflow curated/gold DAG now prepares Git-backed Databricks saved-job settings with a shared job cluster. Curated table tasks run in parallel from the selected raw batch. After the curated layer completes, `gold_latest_case_helper` builds the latest-report-version helper, and the final gold trend tables fan out in parallel from that helper. In dev, submission is disabled by default so the job settings can be reviewed without needing live Databricks credentials. In the AWS-oriented config, submission is enabled and reads Databricks `host` and `token` from AWS Secrets Manager, creates or resets the saved job, and triggers `run-now`. The shared job cluster uses the configured AWS instance profile to read and write S3 raw, curated, gold, and ops paths. Delta deletion vectors are disabled on the job cluster so Databricks-written Delta tables remain queryable by Athena's native Delta reader.
+Drug-reaction trend outputs represent co-reporting counts. They should not be presented as causal associations.
 
-After Databricks finishes, `openfda_refresh_metadata` can register the Delta table locations for Glue/Athena.
+## Glue And Athena
 
-## Target AWS Architecture
+The metadata refresh registers Delta table locations in Glue through Athena DDL:
 
-```mermaid
-flowchart LR
-    A["openFDA Drug Event API"] --> B["Airflow / MWAA"]
-    B --> C["S3 Raw<br/>immutable JSON"]
-    B --> D["S3 Ops/Audit"]
-    C --> E["Databricks Spark Jobs"]
-    E --> F["S3 Curated Delta"]
-    E --> G["S3 Gold Delta"]
-    F --> H["Glue Catalog"]
-    G --> H
-    H --> I["Athena"]
-    G --> J["Optional Bedrock summaries"]
+```sql
+CREATE EXTERNAL TABLE pharma_cv_prod.curated_case_header
+LOCATION 's3://pharma-cv-prod/curated/curated_case_header'
+TBLPROPERTIES ('table_type'='DELTA');
 ```
 
-## Why MinIO Exists In Dev
+The DAG waits for Athena DDL completion and fails if a query fails. `force_recreate=true` deletes only Glue table metadata and recreates it, leaving S3 Delta data untouched.
 
-MinIO is only the local development substitute for S3.
+Athena should use engine version 3 for native Delta Lake querying.
 
-It lets us:
-- test S3 object writes and prefix layout locally
-- keep the boto3 code identical between dev and AWS
-- avoid coupling local development to a live cloud account
+## Local And AWS Execution
 
-The portability comes from configuration:
-- in dev, `S3_ENDPOINT_URL` points boto3 at MinIO
-- in AWS, `S3_ENDPOINT_URL` is removed and boto3 uses native S3
+Local development runs Airflow in Docker Compose and uses MinIO as an S3-compatible emulator. This keeps the boto3 S3 code path close to AWS while avoiding a hard dependency on cloud infrastructure for basic development.
 
-## AWS Service Plan
+AWS-oriented execution uses:
 
-Planned AWS services by layer:
-- orchestration: Airflow, with MWAA as the clean hosted target
-- storage: Amazon S3 for `raw`, `ops/audit`, `curated`, and `gold`
-- transforms: Databricks Spark jobs writing Delta Lake tables to S3
-- metadata: AWS Glue Catalog
-- query layer: Athena
-- secrets: Secrets Manager for Databricks tokens and any protected configs
-- security and ops: IAM, KMS, and CloudWatch
+- Amazon S3 for raw, ops, curated, and gold zones
+- Airflow locally or MWAA as the managed orchestration target
+- Databricks Jobs for Spark transformations
+- AWS Secrets Manager for Databricks host/token
+- IAM instance profiles for Databricks S3 access
+- Glue Catalog and Athena for metadata and query access
 
-## Migration From Dev To AWS
+The same configuration model drives both environments. In dev, `S3_ENDPOINT_URL` points to MinIO. In AWS, that value is unset so boto3 uses native S3.
 
-The code path is designed so the migration is mostly configuration and packaging:
-- replace MinIO bucket settings with a real S3 bucket
-- remove `S3_ENDPOINT_URL`
-- switch from static local credentials to IAM roles
-- point Databricks Jobs at the Git repo and branch configured under `databricks.git_url` and `databricks.git_branch`
-- attach the configured instance profile to the shared Databricks job cluster
-- register curated and gold Delta tables in Glue
-- query them through Athena
+## Future Bedrock Extension
+
+Bedrock is a planned optional capability, not part of the core pipeline path. The clean extension point is after gold tables are built and queryable.
+
+Potential Bedrock summaries could describe:
+
+- recent seriousness trend movement
+- top co-reported drug-reaction changes
+- demographic reporting patterns
+- manufacturer or pharmacologic class monitoring highlights
+
+Any generated summary should remain descriptive and bounded to the data. It should avoid diagnosis, causality claims, or medical advice.
