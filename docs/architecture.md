@@ -4,6 +4,8 @@ This project implements a batch pharmacovigilance reporting pipeline on an AWS-s
 
 The goal is safety signal monitoring and reporting. The pipeline does not diagnose patients, prove causality, or assert that a drug caused a reaction. Drug-reaction outputs should be read as co-reporting patterns within the same safety report.
 
+![Pharma Covigilance Pipeline Architecture](diagrams/arch_diagram.png)
+
 ## End-To-End Flow
 
 ```mermaid
