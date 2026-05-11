@@ -36,6 +36,8 @@ The implemented flow is:
 
 Architecture details live in [docs/architecture.md](docs/architecture.md).
 
+Demo evidence for interview walkthroughs lives in [docs/demo/demo_evidence.md](docs/demo/demo_evidence.md).
+
 ## Data Zones
 
 Raw:
@@ -125,39 +127,50 @@ docker compose exec airflow-scheduler airflow dags list | grep openfda_refresh_m
 
 ## Running The Pipeline
 
+The easiest way to run the demo flow is through the project Makefile:
+
+```bash
+make demo-run WINDOW_START=2025-12-28 WINDOW_END=2025-12-28 MAX_PAGES=200
+```
+
+For a larger demo, run several smaller stable historical windows instead of one large multi-month extraction. The raw extractor stages the whole requested window before writing to S3, so one-day to one-week windows are more reliable for local Airflow runs.
+
+```bash
+make demo-run WINDOW_START=2025-10-01 WINDOW_END=2025-10-07 MAX_PAGES=500
+make demo-run-no-smoke WINDOW_START=2025-10-08 WINDOW_END=2025-10-14 MAX_PAGES=500
+make demo-run-no-smoke WINDOW_START=2025-10-15 WINDOW_END=2025-10-21 MAX_PAGES=500
+```
+
+`make demo-run` waits for the raw Airflow DAG, the Databricks smoke-test run, the curated/gold Databricks run, and the metadata refresh DAG before moving to the next step. The same flow can be run step by step with the commands below.
+
 Trigger raw ingestion for a one-day window:
 
 ```bash
-docker compose exec airflow-scheduler airflow dags trigger openfda_ingest_raw \
-  --conf '{"window_start":"2025-12-28","window_end":"2025-12-28","page_size":100,"max_pages":50}'
+make raw-ingest-wait WINDOW_START=2025-12-28 WINDOW_END=2025-12-28 MAX_PAGES=200
 ```
 
 Run the Databricks smoke test before the full build:
 
 ```bash
-docker compose exec airflow-scheduler airflow dags trigger databricks_smoke_test \
-  --conf '{"dry_run":false}'
+make databricks-smoke-wait
 ```
 
 Preview the curated/gold Databricks job payload:
 
 ```bash
-docker compose exec airflow-scheduler airflow dags trigger openfda_build_curated_gold \
-  --conf '{"window_start":"2025-12-28","window_end":"2025-12-28","dry_run":true}'
+make curated-gold-dry-run WINDOW_START=2025-12-28 WINDOW_END=2025-12-28
 ```
 
 Submit the curated/gold Databricks job:
 
 ```bash
-docker compose exec airflow-scheduler airflow dags trigger openfda_build_curated_gold \
-  --conf '{"window_start":"2025-12-28","window_end":"2025-12-28","dry_run":false}'
+make curated-gold-wait WINDOW_START=2025-12-28 WINDOW_END=2025-12-28
 ```
 
 Refresh Glue/Athena metadata:
 
 ```bash
-docker compose exec airflow-scheduler airflow dags trigger openfda_refresh_metadata \
-  --conf '{"execute_refresh":true,"force_recreate":true}'
+make metadata-refresh-wait
 ```
 
 Use `force_recreate=true` when Glue table definitions need to be recreated while preserving the underlying S3 Delta data.

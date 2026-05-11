@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import asdict, dataclass
+from pathlib import Path
 from typing import Any
 
 from src.common.aws_clients import build_s3_client
@@ -80,6 +81,60 @@ def write_raw_batch_to_s3(config: AppConfig, extraction_result: ExtractionResult
 
     logger.info(
         "Wrote raw openFDA batch to s3_uri=%s",
+        build_s3_uri(config.s3.bucket_name, raw_s3_key),
+    )
+
+    return RawWriteResult(
+        bucket_name=config.s3.bucket_name,
+        records_written=extraction_result.records_fetched,
+        source_file_name=extraction_result.source_file_name,
+        s3_key=raw_s3_key,
+        s3_uri=build_s3_uri(config.s3.bucket_name, raw_s3_key),
+    )
+
+
+def write_staged_raw_file_to_s3(
+    config: AppConfig,
+    extraction_result: ExtractionResult,
+    staged_raw_file_path: str | Path,
+) -> RawWriteResult:
+    if extraction_result.records_fetched == 0:
+        logger.info(
+            "No raw openFDA records to write for ingest_batch_id=%s",
+            extraction_result.ingest_batch_id,
+        )
+        return RawWriteResult(
+            bucket_name=config.s3.bucket_name,
+            records_written=0,
+            source_file_name=extraction_result.source_file_name,
+            s3_key=None,
+            s3_uri=None,
+        )
+
+    local_path = Path(staged_raw_file_path).expanduser()
+    if not local_path.exists():
+        raise FileNotFoundError(f"Staged raw file does not exist: {local_path}")
+
+    query_window_start = parse_window_date(extraction_result.query_window_start)
+    query_window_end = parse_window_date(extraction_result.query_window_end)
+    raw_s3_key = build_raw_s3_key(
+        raw_prefix=config.s3.raw_prefix,
+        source_name=extraction_result.source_name,
+        window_start=query_window_start,
+        window_end=query_window_end,
+        ingest_batch_id=extraction_result.ingest_batch_id,
+        file_name=extraction_result.source_file_name,
+    )
+    client = build_s3_client(config.s3)
+    client.upload_file(
+        Filename=str(local_path),
+        Bucket=config.s3.bucket_name,
+        Key=raw_s3_key,
+        ExtraArgs={"ContentType": "application/x-ndjson"},
+    )
+
+    logger.info(
+        "Uploaded staged raw openFDA batch to s3_uri=%s",
         build_s3_uri(config.s3.bucket_name, raw_s3_key),
     )
 

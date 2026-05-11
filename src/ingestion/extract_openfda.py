@@ -39,6 +39,7 @@ class ExtractionResult:
 @dataclass(frozen=True)
 class ExtractionManifest:
     staged_file_path: str
+    staged_raw_file_path: str | None
     ingest_batch_id: str
     source_name: str
     source_file_name: str
@@ -146,15 +147,33 @@ def stage_extraction_result(
     staging_dir: str | Path,
 ) -> ExtractionManifest:
     stage_path = build_local_stage_path(staging_dir, extraction_result.ingest_batch_id)
+    raw_stage_path = stage_path.with_suffix(".ndjson")
     stage_path.parent.mkdir(parents=True, exist_ok=True)
 
-    with stage_path.open("w", encoding="utf-8") as handle:
-        json.dump(extraction_result.to_dict(include_records=True), handle, indent=2)
+    with raw_stage_path.open("w", encoding="utf-8") as handle:
+        for raw_record in extraction_result.records:
+            envelope = {
+                "raw_payload": raw_record,
+                "safetyreportid": raw_record.get("safetyreportid"),
+                "safetyreportversion": raw_record.get("safetyreportversion"),
+                "receivedate": raw_record.get("receivedate"),
+                "ingest_batch_id": extraction_result.ingest_batch_id,
+                "source_file_name": extraction_result.source_file_name,
+                "api_query_window_start": extraction_result.query_window_start,
+                "api_query_window_end": extraction_result.query_window_end,
+                "load_timestamp": extraction_result.load_timestamp,
+            }
+            handle.write(json.dumps(envelope, separators=(",", ":"), ensure_ascii=False))
+            handle.write("\n")
 
-    logger.info("Staged extraction manifest to %s", stage_path)
+    with stage_path.open("w", encoding="utf-8") as handle:
+        json.dump(extraction_result.to_dict(include_records=False), handle, indent=2)
+
+    logger.info("Staged extraction manifest to %s and raw records to %s", stage_path, raw_stage_path)
 
     return ExtractionManifest(
         staged_file_path=str(stage_path),
+        staged_raw_file_path=str(raw_stage_path),
         ingest_batch_id=extraction_result.ingest_batch_id,
         source_name=extraction_result.source_name,
         source_file_name=extraction_result.source_file_name,
@@ -189,9 +208,17 @@ def load_staged_extraction(staged_file_path: str | Path) -> ExtractionResult:
 
 def cleanup_staged_extraction(staged_file_path: str | Path) -> bool:
     path = Path(staged_file_path).expanduser()
-    if not path.exists():
-        return False
+    raw_path = path.with_suffix(".ndjson")
+    removed = False
 
-    path.unlink()
-    logger.info("Removed staged extraction file %s", path)
-    return True
+    if path.exists():
+        path.unlink()
+        logger.info("Removed staged extraction file %s", path)
+        removed = True
+
+    if raw_path.exists():
+        raw_path.unlink()
+        logger.info("Removed staged raw file %s", raw_path)
+        removed = True
+
+    return removed

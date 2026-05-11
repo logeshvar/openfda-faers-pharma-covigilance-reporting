@@ -25,4 +25,12 @@ fileignoreconfig:
   checksum: c417ddbabed34993015f6392605d5a794e838f6e1354e1943ea4aa30c705c5e7
 - filename: tests/unit/test_extract_openfda.py
   checksum: 2100a24b1850693c26f8bf846e369709715be656d28bc438136f93034b2ecdaf
+- filename: airflow/config/wait_for_databricks_run.py
+  checksum: bd5563e7b0d7a24002c43506e6ef5de57176f05e96934d6237c94985c0d231d6
+- filename: src/ingestion/write_raw_s3.py
+  checksum: 64ff4a599e4fb06c507cb4f00f87b702612311f08449ee6361398efb0b939bc7
+- filename: src/dq/raw_checks.py
+  checksum: e68682daa2e39c80fd249e4685b314ca954d4333dd51d17fc5ff79e492adbc77
+- filename: docs/demo/demo_evidence.md
+  checksum: 425ca2dbcdc1bef5999521807b3b7f2579eeb91408b33751cd52a46c33a91890
 version: ""

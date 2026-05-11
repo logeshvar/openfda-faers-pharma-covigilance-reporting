@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 import logging
 from datetime import timedelta
+from pathlib import Path
 from typing import Any
 
 import pendulum
@@ -10,7 +12,7 @@ from airflow.operators.python import get_current_context
 
 from src.common.config import load_config
 from src.common.path_builders import build_ingest_batch_id
-from src.dq.raw_checks import raise_for_failed_checks, run_raw_checks
+from src.dq.raw_checks import raise_for_failed_checks, run_raw_checks, run_raw_checks_from_iterable
 from src.ingestion.extract_openfda import (
     cleanup_staged_extraction,
     extract_openfda_window,
@@ -20,7 +22,7 @@ from src.ingestion.extract_openfda import (
 )
 from src.ingestion.windowing import resolve_lagged_daily_window
 from src.ingestion.write_ingest_audit import build_ingest_audit_record, write_ingest_audit_to_s3
-from src.ingestion.write_raw_s3 import RawWriteResult, write_raw_batch_to_s3
+from src.ingestion.write_raw_s3 import RawWriteResult, write_raw_batch_to_s3, write_staged_raw_file_to_s3
 
 logger = logging.getLogger(__name__)
 CONFIG = load_config()
@@ -33,6 +35,15 @@ def _default_window_from_context(context: dict[str, Any]) -> tuple[str, str]:
         default_window_days=CONFIG.ingestion.default_window_days,
     )
     return window_start.isoformat(), window_end.isoformat()
+
+
+def _iter_raw_payloads_from_staged_ndjson(staged_raw_file_path: str):
+    with Path(staged_raw_file_path).expanduser().open("r", encoding="utf-8") as handle:
+        for line in handle:
+            if not line.strip():
+                continue
+            envelope = json.loads(line)
+            yield envelope.get("raw_payload", {})
 
 
 @dag(
@@ -114,11 +125,19 @@ def openfda_ingest_raw():
     @task
     def validate_and_persist(stage_manifest: dict[str, Any]) -> dict[str, Any]:
         extraction_result = load_staged_extraction(stage_manifest["staged_file_path"])
-        dq_summary = run_raw_checks(
-            records=extraction_result.records,
-            required_fields=CONFIG.dq.required_raw_fields,
-            min_expected_records=CONFIG.dq.min_expected_records,
-        )
+        staged_raw_file_path = stage_manifest.get("staged_raw_file_path")
+        if staged_raw_file_path:
+            dq_summary = run_raw_checks_from_iterable(
+                records=_iter_raw_payloads_from_staged_ndjson(staged_raw_file_path),
+                required_fields=CONFIG.dq.required_raw_fields,
+                min_expected_records=CONFIG.dq.min_expected_records,
+            )
+        else:
+            dq_summary = run_raw_checks(
+                records=extraction_result.records,
+                required_fields=CONFIG.dq.required_raw_fields,
+                min_expected_records=CONFIG.dq.min_expected_records,
+            )
 
         raw_write_result = RawWriteResult(
             bucket_name=CONFIG.s3.bucket_name,
@@ -129,7 +148,14 @@ def openfda_ingest_raw():
         )
 
         if dq_summary.overall_status == "PASS":
-            raw_write_result = write_raw_batch_to_s3(CONFIG, extraction_result)
+            if staged_raw_file_path:
+                raw_write_result = write_staged_raw_file_to_s3(
+                    CONFIG,
+                    extraction_result,
+                    staged_raw_file_path,
+                )
+            else:
+                raw_write_result = write_raw_batch_to_s3(CONFIG, extraction_result)
 
         audit_record = build_ingest_audit_record(
             extraction_result=extraction_result,
